@@ -1,6 +1,15 @@
 // src/config.h
 #pragma once
 
+// 嘗試載入本地配置（如果存在）
+// 本地配置會覆蓋下方的預設配置
+#if __has_include("config_local.h")
+    #include "config_local.h"
+    #define LOCAL_CONFIG_LOADED 1
+#endif
+
+#ifndef LOCAL_CONFIG_LOADED
+
 // =============================================
 //  WiFi
 // =============================================
@@ -115,3 +124,5 @@ enum SystemState {
 // =============================================
 extern String currentPassword;       // 可透過 Telegram 動態修改
 extern int    failCount;
+
+#endif // LOCAL_CONFIG_LOADED
