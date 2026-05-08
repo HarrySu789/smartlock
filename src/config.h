@@ -4,21 +4,21 @@
 // =============================================
 //  WiFi
 // =============================================
-#define WIFI_SSID          "YOUR_WIFI_SSID"
-#define WIFI_PASS          "YOUR_WIFI_PASSWORD"
-#define WIFI_TIMEOUT_SEC   20          // 連線逾時秒數
+#define WIFI_SSID          "YOUR_WIFI_SSID"        // ⚠️ 請替換為您的 WiFi 名稱
+#define WIFI_PASS          "YOUR_WIFI_PASSWORD"    // ⚠️ 請替換為您的 WiFi 密碼
+#define WIFI_TIMEOUT_SEC   20                      // 連線逾時秒數
 
 // =============================================
 //  Telegram Bot
 // =============================================
-#define BOT_TOKEN          "YOUR_BOT_TOKEN"   // 從 @BotFather 取得
-#define CHAT_ID            "YOUR_CHAT_ID"     // 純數字，從 getUpdates 取得
+#define BOT_TOKEN          "YOUR_BOT_TOKEN"    // ⚠️ 從 @BotFather 取得，請替換為您的 token
+#define CHAT_ID            "YOUR_CHAT_ID"      // ⚠️ 純數字，從 getUpdates 取得，請替換為您的 chat ID
 #define BOT_POLL_MS        3000             // 輪詢間隔（毫秒），勿低於 1000
 
 // =============================================
 //  天氣 API (OpenWeatherMap)
 // =============================================
-#define OWM_API_KEY        "YOUR_OPENWEATHER_API_KEY"
+#define OWM_API_KEY        "YOUR_OPENWEATHER_API_KEY"  // ⚠️ 請從 openweathermap.org 申請並替換
 #define OWM_CITY           "Taipei"
 #define OWM_COUNTRY        "TW"
 #define OWM_LANG           "zh_tw"
