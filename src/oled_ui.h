@@ -7,7 +7,7 @@
 
 #define OLED_WIDTH   128
 #define OLED_HEIGHT  64
-#define OLED_ADDRESS 0x3C
+#define OLED_ADDRESS 0x3C  // SSD1306 標準地址
 #define OLED_RESET   -1  // 共用 ESP32 的 RST
 
 class OledUI {
@@ -33,6 +33,11 @@ public:
         display.clearDisplay();
         display.setTextColor(SSD1306_WHITE);
         display.cp437(true);
+        
+        // 設置最大對比度
+        display.ssd1306_command(SSD1306_SETCONTRAST);
+        display.ssd1306_command(255);  // 最大對比度
+        
         Serial.println("✅ OLED 初始化完成");
         return true;
     }

@@ -20,6 +20,7 @@ static const ToneNote SOUND_DENY[]      = {{350,200},{250,300},{0,0}};
 static const ToneNote SOUND_BEEP[]      = {{1200,60},{0,0}};
 static const ToneNote SOUND_ALARM[]     = {{2000,180},{0,120},{2000,180},{0,120},{2000,180},{0,0}};
 static const ToneNote SOUND_ENROLL_OK[] = {{1047,80},{1319,80},{1568,120},{0,0}};
+static const ToneNote SOUND_LOW_BATT[]  = {{600,150},{0,50},{600,150},{0,0}};
 static const ToneNote SOUND_LOWBATT[]   = {{600,150},{0,50},{600,150},{0,0}};
 
 bool audioInitialized = false;
@@ -105,5 +106,5 @@ void asyncSoundTask(void* arg) {
 
 void playSoundAsync(const ToneNote* notes) {
     auto* arg = new AsyncSoundArg{notes};
-    xTaskCreate(asyncSoundTask, "snd", 2048, arg, 1, NULL);
+    xTaskCreate(asyncSoundTask, "snd", 4096, arg, 1, NULL);  // 增加堆疊大小到 4KB
 }

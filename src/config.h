@@ -13,21 +13,21 @@
 // =============================================
 //  WiFi
 // =============================================
-#define WIFI_SSID          "YOUR_WIFI_SSID"        // ⚠️ 請替換為您的 WiFi 名稱
-#define WIFI_PASS          "YOUR_WIFI_PASSWORD"    // ⚠️ 請替換為您的 WiFi 密碼
-#define WIFI_TIMEOUT_SEC   20                      // 連線逾時秒數
+#define WIFI_SSID          "Alvin123"
+#define WIFI_PASS          "2444666668888888"
+#define WIFI_TIMEOUT_SEC   20          // 連線逾時秒數
 
 // =============================================
 //  Telegram Bot
 // =============================================
-#define BOT_TOKEN          "YOUR_BOT_TOKEN"    // ⚠️ 從 @BotFather 取得，請替換為您的 token
-#define CHAT_ID            "YOUR_CHAT_ID"      // ⚠️ 純數字，從 getUpdates 取得，請替換為您的 chat ID
+#define BOT_TOKEN          "8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s"   // 從 @BotFather 取得
+#define CHAT_ID            "1878400880" 
 #define BOT_POLL_MS        3000             // 輪詢間隔（毫秒），勿低於 1000
 
 // =============================================
 //  天氣 API (OpenWeatherMap)
 // =============================================
-#define OWM_API_KEY        "YOUR_OPENWEATHER_API_KEY"  // ⚠️ 請從 openweathermap.org 申請並替換
+#define OWM_API_KEY        "5852c9c4a5adaa8b3002c5e9cd401276"
 #define OWM_CITY           "Taipei"
 #define OWM_COUNTRY        "TW"
 #define OWM_LANG           "zh_tw"
@@ -83,6 +83,16 @@
 #define LED_GREEN_P        0      // P0 → 綠色 LED（解鎖成功）
 #define LED_RED_P          1      // P1 → 紅色 LED（警報/失敗）
 #define BUZZER_P           2      // P2 → 蜂鳴器（選配）
+#define US_TRIG_P          3      // P3 → HC-SR04 TRIG
+
+// ════════════════════════════════════════
+//  HC-SR04 超聲波近接感測器
+// ════════════════════════════════════════
+#define US_ECHO_PIN         9      // GPIO9 = D10（直接 GPIO）
+#define WAKE_DISTANCE_CM    80     // 距離 ≤ 80cm 時喚醒系統（公分）
+#define SLEEP_TIMEOUT_SEC   15     // IDLE 狀態下，幾秒無人就進入休眠
+#define US_SLEEP_INTERVAL   200    // 休眠狀態下的量測間隔（毫秒）
+#define US_IDLE_INTERVAL    500    // 待機狀態下的量測間隔（毫秒）
 
 // =============================================
 //  功能開關
@@ -109,13 +119,14 @@
 //  系統狀態列舉
 // =============================================
 enum SystemState {
-    STATE_IDLE,
+    STATE_SLEEP,         // 休眠，等待有人靠近
+    STATE_IDLE,          // 待機，正常運作
     STATE_VERIFY_FACE,
     STATE_VERIFY_FP,
     STATE_VERIFY_PWD,
-    STATE_UNLOCKED,
-    STATE_ALARM,
-    STATE_FACE_MGMT,
+    STATE_UNLOCKED,      // 已解鎖
+    STATE_ALARM,         // 警報
+    STATE_FACE_MGMT,     // 人臉管理
     STATE_ENROLL_FACE
 };
 
