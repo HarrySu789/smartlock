@@ -15,7 +15,7 @@ static const char KEY_MAP[4][4] = {
 };
 
 // 防彈跳設定
-#define KEY_DEBOUNCE_MS  30    // 縮短防彈跳延遲（從50ms減至30ms）
+#define KEY_DEBOUNCE_MS  20    // 縮短防彈跳延遲（從30ms減至20ms，反應更快）
 #define KEY_HOLD_MS      800   // 長按判斷時間（ms）
 
 static unsigned long lastKeyTime = 0;

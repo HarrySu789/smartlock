@@ -1,8 +1,8 @@
-// src/main.cpp - 智慧門鎖主程式（含超聲波近接喚醒）
+// src/main.cpp - 智慧門鎖主程式（PIR 人體感測器版）
 #include <Arduino.h>
 #include <Wire.h>
 #include "config.h"
-#include "ultrasonic.h"
+#include "pir_sensor.h"
 #include "face_recognition.h"
 #include "face_database.h"
 #include "face_manager.h"
@@ -22,7 +22,7 @@ FaceRecognitionSystem faceSystem;
 FaceDatabase          faceDB;
 FaceManager           faceMgr(faceSystem, faceDB, ui);
 BatteryMonitor        battery;
-UltrasonicSensor      sonar;  // 超聲波感測器
+PIRSensor             pir;  // PIR 人體感測器
 
 HardwareSerial       fpSerial(1);
 Adafruit_Fingerprint finger(&fpSerial);
@@ -40,8 +40,9 @@ WeatherInfo  weatherCache;
 unsigned long lastWeatherUpdate = 0;
 
 // ===== 時間戳記 =====
-unsigned long lastSonarCheck   = 0;  // 超聲波檢查
+unsigned long lastPIRCheck     = 0;  // PIR 檢查
 unsigned long lastActivityTime = 0;  // 最後活動時間
+unsigned long lastWeatherAnnounceTime = 0;  // 上次天氣播報時間（防連觸）
 
 // ===== Telegram 待登錄 =====
 extern String pendingEnrollName;
@@ -129,8 +130,10 @@ void handleKeyInput(char key) {
     markActivity();
     playSoundAsync(SOUND_BEEP);
     
-    // 序列埠輸出按鍵
-    Serial.printf("[按鍵] '%c' (ASCII: %d)\n", key, (int)key);
+    // 序列埠輸出按鍵（顯示目前按下的按鍵）
+    Serial.printf("══════════════════════════\n");
+    Serial.printf("🔢 按下按鍵: '%c' (ASCII: %d)\n", key, (int)key);
+    Serial.printf("══════════════════════════\n");
 
     // A 鍵（長按進入管理模式，需先輸入管理密碼）
     if (key == 'A') {
@@ -164,9 +167,16 @@ void handleKeyInput(char key) {
         inputBuffer = "";
         ui.showPasswordInput(0);
     } else if (key == '*') {
-        Serial.println("  → 按下 * 鍵（清除）");
+        Serial.println("  → 按下 * 鍵（清除全部）");
         inputBuffer = "";
         ui.showPasswordInput(0);
+    } else if (key == 'D') {
+        // D 鍵：刪除最後一位
+        if (inputBuffer.length() > 0) {
+            inputBuffer.remove(inputBuffer.length() - 1);
+            ui.showPasswordInput(inputBuffer.length());
+            Serial.printf("  → 刪除一位，目前輸入: \"%s\"\n", inputBuffer.c_str());
+        }
     } else if (isDigit(key)) {
         inputBuffer += key;
         ui.showPasswordInput(inputBuffer.length());
@@ -178,18 +188,18 @@ void handleKeyInput(char key) {
 // ===== STATE_SLEEP：休眠，等待有人靠近 =====
 void handleSleep() {
     // 用低頻率量測，節省功耗
-    if (millis() - lastSonarCheck < US_SLEEP_INTERVAL) return;
-    lastSonarCheck = millis();
+    if (millis() - lastPIRCheck < 500) return;
+    lastPIRCheck = millis();
 
-    if (sonar.isPersonNearby(WAKE_DISTANCE_CM)) {
-        float d = sonar.getLastDistance();
-        Serial.printf("👤 偵測到有人靠近（%.1f cm），喚醒系統\n", d);
+    // 檢查門外 PIR
+    if (pir.isOutsideDetected()) {
+        Serial.println("👤 門外偵測到人體，喚醒系統");
 
         // ── 喚醒序列 ──
         // 1. 開啟 OLED
-        ui.showMessage("Someone nearby...", String((int)d) + " cm detected");
+        ui.showMessage("Someone outside!", "Wake up system");
 
-        // 2. 播放喚醒提示音（短促友善音）
+        // 2. 播放喚醒提示音
         playSoundAsync(SOUND_BEEP);
 
         // 3. 切換狀態
@@ -197,22 +207,53 @@ void handleSleep() {
         lastActivityTime = millis();
 
         Serial.println("✅ 系統已喚醒");
+        return;
     }
-    // 若無人，維持 OLED 關閉狀態
+
+    // 檢查門內 PIR（休眠時也要檢查天氣播報）
+    if (pir.isInsideDetected()) {
+        // 檢查冷卻時間
+        unsigned long now = millis();
+        if (now - lastWeatherAnnounceTime > (PIR_COOLDOWN_SEC * 1000UL)) {
+            lastWeatherAnnounceTime = now;
+            Serial.println("🏠 門內偵測到人體，播報天氣");
+
+            // 播報天氣
+            if (WEATHER_NOTIFY_EN && weatherCache.valid) {
+                String weatherMsg = getWeatherMessage(weatherCache);
+                ui.showMessage("Weather:", weatherMsg);
+            }
+        }
+    }
 }
 
 // ===== STATE_IDLE：正常待機，全功能運作 =====
 void handleIdle() {
-    // ── 無人自動進入休眠 ──────────────────────────
-    if (millis() - lastSonarCheck >= US_IDLE_INTERVAL) {
-        lastSonarCheck = millis();
-        bool nearby = sonar.isPersonNearby(WAKE_DISTANCE_CM);
+    // ── PIR 檢查與自動進入休眠 ──────────────────────────
+    if (millis() - lastPIRCheck >= 500) {
+        lastPIRCheck = millis();
+        
+        // 檢查門外 PIR
+        bool outsideDetected = pir.isOutsideDetected();
+        
+        // 檢查門內 PIR（天氣播報）
+        if (pir.isInsideDetected()) {
+            unsigned long now = millis();
+            if (now - lastWeatherAnnounceTime > (PIR_COOLDOWN_SEC * 1000UL)) {
+                lastWeatherAnnounceTime = now;
+                Serial.println("🏠 門內偵測到人體，播報天氣");
+                if (WEATHER_NOTIFY_EN && weatherCache.valid) {
+                    String weatherMsg = getWeatherMessage(weatherCache);
+                    ui.showMessage("Weather:", weatherMsg);
+                }
+            }
+        }
 
-        if (!nearby) {
-            // 距離超過門檻，開始計時
+        // 如果門外沒偵測到人，開始計時進入休眠
+        if (!outsideDetected) {
             unsigned long idleSec = (millis() - lastActivityTime) / 1000;
             if (idleSec >= SLEEP_TIMEOUT_SEC) {
-                Serial.printf("💤 %lu 秒無人，進入休眠\n", (unsigned long)SLEEP_TIMEOUT_SEC);
+                Serial.printf("💤 %lu 秒無人就入休眠\n", (unsigned long)SLEEP_TIMEOUT_SEC);
 
                 // 清理畫面後關閉 OLED
                 ui.showMessage("Standby...", "Entering sleep");
@@ -225,7 +266,7 @@ void handleIdle() {
                 return;
             }
         } else {
-            // 有人在附近，更新活動時間
+            // 門外有人，更新活動時間
             markActivity();
         }
     }
@@ -353,10 +394,11 @@ void checkPendingEnrollWrapper(camera_fb_t* fb) {
 
 // ===== STATE_UNLOCKED：已解鎖倒數 =====
 void handleUnlocked() {
+    // 只使用 relay.h 中的 updateRelay() 來自動鎖門，避免兩個計時機制衝突
     updateRelay();
 
-    // 倒數顯示
-    int remaining = (UNLOCK_DURATION_MS - (millis() - unlockTimestamp)) / 1000;
+    // 顯示剩餘秒數（從 relay.h 取得）
+    int remaining = getUnlockRemainingSeconds();
     if (remaining < 0) remaining = 0;
 
     // 每秒更新顯示
@@ -368,8 +410,8 @@ void handleUnlocked() {
         ui.showUnlocked(lastUnlockName, weather.length() > 0 ? weather : msg);
     }
 
-    if (millis() - unlockTimestamp > UNLOCK_DURATION_MS) {
-        lockDoor();
+    // 檢查是否已自動鎖門
+    if (!isDoorUnlocked()) {
         setLED(false, false);
         currentState = STATE_IDLE;
         lastRemaining = -1;
@@ -416,13 +458,19 @@ void handleFaceMgmt() {
     markActivity();
 
     if (key == '1') {
+        // 人臉登錄：透過 Telegram 操作
         ui.showMessage("Add Face", "Use Telegram:\n/face_enroll [name]");
         sendTelegramMessage("📷 請使用 Telegram 登錄：\n/face_enroll 姓名");
         delay(3000);
     } else if (key == '2') {
-        auto list = faceSystem.getList();
-        ui.showList("Faces (del via TG)", list);
-        sendTelegramMessage("/face_list 查看，/face_delete 姓名 刪除");
+        // 指紋登錄：顯示操作說明
+        ui.showMessage("FP Enroll", "Press finger\nthen lift");
+        sendTelegramMessage("👆 指紋登錄說明：\n請在指紋感測器上按壓手指\n聽到嗶聲後提起，再重新按壓\n重複 8-12 次直到成功");
+        Serial.println("═══ 指紋登錄說明 ═══");
+        Serial.println("請在指紋感測器上按壓手指");
+        Serial.println("聽到嗶聲後提起，再重新按壓");
+        Serial.println("重複 8-12 次直到成功");
+        Serial.println("═══════════════════");
         delay(4000);
     } else if (key == '3') {
         auto list = faceSystem.getList();
@@ -448,7 +496,7 @@ void handleFaceMgmt() {
 void setup() {
     Serial.begin(115200);
     delay(2000);
-    Serial.println("╔══════════════════════════════╗");
+    Serial.println("╔════════════════════════════╗");
     Serial.println("║  智慧門鎖 V2  啟動中...  ║");
     Serial.println("╚══════════════════════════════╝");
 
@@ -473,10 +521,9 @@ void setup() {
     // 5. 電池監控
     battery.begin();
 
-    // 6. HC-SR04 超聲波感測器
-    sonar.begin();
-    float testDist = sonar.measureMedianCm(3);
-    Serial.printf("HC-SR04 測試距離：%.1f cm\n", testDist);
+    // 6. PIR 人體感測器
+    pir.begin();
+    Serial.println("✅ 紅外線(PIR) 感測器初始化完成");
 
     // 7. 鏡頭
     ui.showMessage("Booting...", "Camera init");
@@ -494,7 +541,9 @@ void setup() {
     ui.showMessage("Booting...", "Fingerprint");
     fpSerial.begin(AS608_BAUD, SERIAL_8N1, AS608_RX_PIN, AS608_TX_PIN);
     if (!finger.verifyPassword()) {
-        Serial.println("⚠️ AS608 未找到，指紋功能停用");
+        Serial.println("⚠️ AS608 指紋模組未找到，功能停用");
+    } else {
+        Serial.println("✅ AS608 指紋辨識模組初始化成功");
     }
 
     // 10. 音頻
@@ -519,9 +568,8 @@ void setup() {
     // 14. 啟動完成 → 進入 SLEEP 等待有人靠近
     if (wifiOK) {
         sendTelegramMessage(
-            "🔐 智慧門鎖 V2 已啟動（近接喚醒模式）\n"
+            "🔐 智慧門鎖 V2 已啟動（PIR 喚醒模式）\n"
             "IP: " + WiFi.localIP().toString() + "\n"
-            "喚醒距離: " + String(WAKE_DISTANCE_CM) + " cm\n"
             "電量: " + battery.toDisplayString() + "\n" +
             getCurrentDateTime()
         );

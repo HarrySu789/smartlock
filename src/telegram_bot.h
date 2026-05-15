@@ -22,6 +22,7 @@ extern BatteryMonitor        battery;
 extern String                currentPassword;
 extern int                   failCount;
 extern SystemState           currentState;
+extern unsigned long          unlockTimestamp;
 
 WiFiClientSecure tgClient;
 UniversalTelegramBot bot(BOT_TOKEN, tgClient);
@@ -147,6 +148,9 @@ void handleTelegramCommands() {
         if (text == "/unlock") {
             bot.sendMessage(CHAT_ID, "🔓 開鎖中...", "");
             unlockDoor(5000);
+            // 設定狀態為 UNLOCKED 以觸發自動上鎖邏輯
+            currentState = STATE_UNLOCKED;
+            unlockTimestamp = millis();
             sendTelegramMessage("✅ 遠端開鎖 5 秒\n時間：" + getCurrentDateTime());
         }
         // ── /status ──────────────────────────
@@ -269,6 +273,23 @@ void handleTelegramCommands() {
                 Serial.printf("[TG] 待登錄人臉：%s\n", name.c_str());
             }
         }
+        // ── /fp_enroll ────────────────────────
+        else if (text.startsWith("/fp_enroll ")) {
+            // 指紋登錄功能預留，目前 AS608 需要實體按鍵操作
+            bot.sendMessage(CHAT_ID, 
+                "⚠️ 指紋登錄需在門鎖設備上操作：\n"
+                "1. 進入管理模式（輸入管理密碼後按 A）\n"
+                "2. 按 2 選擇指紋登錄\n"
+                "3. 在指紋感測器上按壓手指\n"
+                "4. 提起後再按壓，重複直到成功", "");
+        }
+        // ── /fp_list ────────────────────────
+        else if (text == "/fp_list") {
+            bot.sendMessage(CHAT_ID, 
+                "📋 指紋查詢：\n"
+                "AS608 最多可儲存 127 枚指紋\n"
+                "目前無法從遠端查詢已登錄指紋，請在設備上操作", "");
+        }
         // ── /help ────────────────────────────
         else if (text == "/help" || text == "/start") {
             String h = "🔐 智慧門鎖 V2 指令說明\n";
@@ -276,13 +297,15 @@ void handleTelegramCommands() {
             h += "🔑 *門鎖控制*\n";
             h += "/unlock — 遠端開鎖 5 秒\n";
             h += "/status — 系統狀態\n";
-            h += "/alarm_off — 解除警報\n";
-            h += "/photo — 拍攝門口畫面\n\n";
+            h += "/alarm_off — 解除警報\n\n";
             h += "👤 *人臉管理*\n";
             h += "/face_list — 列出所有人臉\n";
             h += "/face_enroll [名稱] — 登錄人臉\n";
             h += "/face_delete [名稱] — 刪除人臉\n";
             h += "/face_deleteall — 清除所有人臉\n\n";
+            h += "🔐 *指紋管理*（需在設備上操作）\n";
+            h += "/fp_enroll — 查看登錄說明\n";
+            h += "/fp_list — 查看指紋說明\n\n";
             h += "🔧 *系統設定*\n";
             h += "/set_password [新密碼] — 修改密碼\n";
             h += "/weather — 查詢天氣\n";

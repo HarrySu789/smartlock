@@ -83,16 +83,19 @@
 #define LED_GREEN_P        0      // P0 → 綠色 LED（解鎖成功）
 #define LED_RED_P          1      // P1 → 紅色 LED（警報/失敗）
 #define BUZZER_P           2      // P2 → 蜂鳴器（選配）
-#define US_TRIG_P          3      // P3 → HC-SR04 TRIG
+#define PIR_IN_P            3      // P3 → 門內 PIR 輸入
 
 // ════════════════════════════════════════
-//  HC-SR04 超聲波近接感測器
+//  HC-SR501 PIR 人體感測器
 // ════════════════════════════════════════
-#define US_ECHO_PIN         9      // GPIO9 = D10（直接 GPIO）
-#define WAKE_DISTANCE_CM    80     // 距離 ≤ 80cm 時喚醒系統（公分）
+#define PIR_OUT_PIN         9      // GPIO9 = D10 → 門外 PIR（直接 GPIO）
+
+// PIR 感測 Threshold
 #define SLEEP_TIMEOUT_SEC   15     // IDLE 狀態下，幾秒無人就進入休眠
-#define US_SLEEP_INTERVAL   200    // 休眠狀態下的量測間隔（毫秒）
-#define US_IDLE_INTERVAL    500    // 待機狀態下的量測間隔（毫秒）
+
+// PIR 防連觸冷卻時間（分鐘）
+// 門內 PIR 觸發天氣播報後，需經過此時間才能再次觸發
+#define PIR_COOLDOWN_SEC    (5 * 60)  // 5 分鐘冷卻時間
 
 // =============================================
 //  功能開關
