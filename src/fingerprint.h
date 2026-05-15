@@ -20,8 +20,14 @@ bool initFingerprint() {
     if (finger.verifyPassword()) {
         fpInitialized = true;
         finger.getParameters();
+        
+        // 🚀 新增：強迫 AS608 吐出目前真正儲存的指紋數量
+        finger.getTemplateCount(); 
+        
         Serial.printf("✅ AS608 就緒 | 容量: %d 筆 | 安全等級: %d\n",
                       finger.capacity, finger.security_level);
+        Serial.printf("📂 [真相大白] AS608 內部目前已儲存了 %d 枚指紋！\n", finger.templateCount);
+        
         return true;
     }
 
@@ -29,6 +35,7 @@ bool initFingerprint() {
     return false;
 }
 
+// ── 驗證指紋（回傳 ID，-1 = 不匹配，-2 = 無法掃描）──
 // ── 驗證指紋（回傳 ID，-1 = 不匹配，-2 = 無法掃描）──
 int verifyFingerprint() {
     if (!fpInitialized) return -2;
@@ -38,17 +45,37 @@ int verifyFingerprint() {
     if (ret != FINGERPRINT_OK) return -2;  // 手指未放穩
 
     // 轉換特徵
-    if (finger.image2Tz() != FINGERPRINT_OK) return -2;
+    if (finger.image2Tz() != FINGERPRINT_OK) {
+        Serial.println("❌ [指紋比對] 影像太模糊，無法提取特徵");
+        return -2;
+    }
 
     // 搜尋資料庫
-    if (finger.fingerFastSearch() != FINGERPRINT_OK) return -1;  // 不匹配
-
-    // 信心分數過低也視為不匹配（設定 >= 40 才接受）
-    if (finger.confidence < 40) return -1;
-
-    Serial.printf("✅ 指紋匹配 ID=%d，信心=%d\n",
-                  finger.fingerID, finger.confidence);
-    return finger.fingerID;
+    ret = finger.fingerFastSearch();
+    
+    if (ret == FINGERPRINT_OK) {
+        // 找到了！印出最關鍵的除錯數據
+        Serial.printf("🔍 [指紋比對] 找到匹配！ID = %d, 信心分數 = %d\n", finger.fingerID, finger.confidence);
+        
+        // 防呆機制：阻擋幽靈 ID 或過低的分數
+        if (finger.fingerID == 0 || finger.fingerID > 127) {
+            Serial.println("⚠️ [致命錯誤] 匹配到無效的 ID，資料庫可能毀損！");
+            return -1;
+        }
+        
+        if (finger.confidence < 60) {
+            Serial.println("⛔ [安全阻擋] 雖然匹配，但信心分數低於 60，拒絕放行！");
+            return -1;
+        }
+        
+        return finger.fingerID; // 分數夠高，真正放行
+        
+    } else {
+        Serial.println("❌ [指紋比對] 完全找不到相似的指紋");
+        // 雖然找不到，但我們確保把上次的殘留分數歸零，避免 OLED 顯示錯誤
+        finger.confidence = 0; 
+        return -1;
+    }
 }
 
 // ── 登錄指紋 ──────────────────────────────────────
