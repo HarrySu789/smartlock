@@ -57,7 +57,6 @@ void successUnlock(const String& name, camera_fb_t* photoFb);
 void failedAttempt();
 void setLED(bool green, bool red);
 void markActivity();
-void processTelegramCommand(const String& text, const String& fromId);
 void checkPendingEnrollWrapper(camera_fb_t* fb);
 void startFingerprintEnrollment();
 void startFingerprintVerify();
@@ -86,8 +85,7 @@ void successUnlock(const String& name, camera_fb_t* photoFb) {
     playSoundAsync(SOUND_UNLOCK);
     setLED(true, false);
     String weatherMsg = getWeatherMessage(weatherCache);
-    String weatherDisplay = WEATHER_NOTIFY_EN ? weatherMsg : "";
-    ui.showUnlocked(name, weatherDisplay);
+    ui.showUnlocked(name, weatherMsg);
     sendTelegramMessage("✅ 解鎖：" + name + "\n" + getCurrentDateTime() + "\n" + weatherMsg);
 }
 
@@ -109,20 +107,15 @@ void failedAttempt() {
 void handleKeyInput(char key) {
     markActivity();
     playSoundAsync(SOUND_BEEP);
-    Serial.printf("══════════════════════════\n");
-    Serial.printf("🔢 按下按鍵: '%c' (ASCII: %d)\n", key, (int)key);
-    Serial.printf("══════════════════════════\n");
+    Serial.printf("🔢 按下按鍵: '%c'\n", key);
 
     if (key == 'A') {
-        Serial.println("  → 按下 A 鍵（管理模式）");
-        Serial.printf("  → 輸入緩衝: \"%s\"\n", inputBuffer.c_str());
         if (inputBuffer == ADMIN_PASSWORD) {
             inputBuffer = "";
             currentState = STATE_FACE_MGMT;
-            Serial.println("  → 管理密碼正確，進入管理模式");
+            Serial.println("→ 管理模式");
         } else {
-            ui.showMessage("Access Denied", "Wrong admin pwd");
-            Serial.println("  → 管理密碼錯誤");
+            ui.showMessage("Access Denied", "Wrong pwd");
             delay(1500);
         }
         inputBuffer = "";
@@ -130,34 +123,24 @@ void handleKeyInput(char key) {
     }
 
     if (key == '#') {
-        Serial.printf("  → 按下 # 鍵（確認）\n");
-        Serial.printf("  → 輸入緩衝: \"%s\" vs 密碼: \"%s\"\n", inputBuffer.c_str(), currentPassword.c_str());
         if (inputBuffer == currentPassword) {
-            Serial.println("  → 密碼正確！");
-            successUnlock("Password", nullptr);
+            successUnlock("密碼", nullptr);
         } else {
-            Serial.println("  → 密碼錯誤！");
             failedAttempt();
         }
         inputBuffer = "";
         ui.showPasswordInput(0);
     } else if (key == '*') {
-        Serial.println("  → 按下 * 鍵（清除全部）");
         inputBuffer = "";
         ui.showPasswordInput(0);
-    } else if (key == 'D') {
-        if (inputBuffer.length() > 0) {
-            inputBuffer.remove(inputBuffer.length() - 1);
-            ui.showPasswordInput(inputBuffer.length());
-            Serial.printf("  → 刪除一位，目前輸入: \"%s\"\n", inputBuffer.c_str());
-        }
+    } else if (key == 'D' && inputBuffer.length() > 0) {
+        inputBuffer.remove(inputBuffer.length() - 1);
+        ui.showPasswordInput(inputBuffer.length());
     } else if (key == 'C') {
-        Serial.println("  → 按下 C 鍵（指紋偵測 7 秒）");
         startFingerprintVerify();
     } else if (isDigit(key)) {
         inputBuffer += key;
         ui.showPasswordInput(inputBuffer.length());
-        Serial.printf("  → 已輸入 %d 位: \"%s\"\n", inputBuffer.length(), inputBuffer.c_str());
     }
 }
 
@@ -167,57 +150,42 @@ void handleSleep() {
 
     if (pir.isOutsideDetected()) {
         Serial.println("👤 門外偵測到人體，喚醒系統");
-        ui.showMessage("Someone outside!", "Wake up system");
+        ui.showMessage("Someone outside!", "Wake up");
         playSoundAsync(SOUND_BEEP);
         currentState = STATE_IDLE;
         lastActivityTime = millis();
-        Serial.println("✅ 系統已喚醒");
-        return;
-    }
-
-    if (pir.isInsideDetected()) {
-        unsigned long now = millis();
-        if (now - lastWeatherAnnounceTime > (PIR_COOLDOWN_SEC * 1000UL)) {
-            lastWeatherAnnounceTime = now;
-            Serial.println("🏠 門內偵測到人體，播報天氣");
-            if (WEATHER_NOTIFY_EN && weatherCache.valid) {
-                String weatherMsg = getWeatherMessage(weatherCache);
-                ui.showMessage("Weather:", weatherMsg);
-            }
-        }
     }
 }
 
 void handleIdle() {
     if (millis() - lastPIRCheck >= 500) {
         lastPIRCheck = millis();
-        bool outsideDetected = pir.isOutsideDetected();
         
+        // 門內 PIR 檢查
         if (pir.isInsideDetected()) {
+            Serial.println("⚠️ 門內 PIR 偵測到！");
             unsigned long now = millis();
             if (now - lastWeatherAnnounceTime > (PIR_COOLDOWN_SEC * 1000UL)) {
                 lastWeatherAnnounceTime = now;
                 Serial.println("🏠 門內偵測到人體，播報天氣");
                 if (WEATHER_NOTIFY_EN && weatherCache.valid) {
-                    String weatherMsg = getWeatherMessage(weatherCache);
-                    ui.showMessage("Weather:", weatherMsg);
+                    ui.showMessage("Weather:", getWeatherMessage(weatherCache));
                 }
             }
         }
 
-        if (!outsideDetected) {
-            unsigned long idleSec = (millis() - lastActivityTime) / 1000;
-            if (idleSec >= SLEEP_TIMEOUT_SEC) {
-                Serial.printf("💤 %lu 秒無人就入休眠\n", (unsigned long)SLEEP_TIMEOUT_SEC);
-                ui.showMessage("Standby...", "Entering sleep");
-                delay(800);
-                ui.display.ssd1306_command(SSD1306_DISPLAYOFF);
-                setLED(false, false);
-                inputBuffer = "";
-                currentState = STATE_SLEEP;
-                return;
-            }
-        } else {
+        // 門外 PIR 檢查進入休眠
+        bool outsideDetected = pir.isOutsideDetected();
+        if (!outsideDetected && (millis() - lastActivityTime) / 1000 >= SLEEP_TIMEOUT_SEC) {
+            Serial.printf("💤 %d 秒無人就入休眠\n", SLEEP_TIMEOUT_SEC);
+            ui.showMessage("Standby...", "Sleep");
+            delay(800);
+            ui.display.ssd1306_command(SSD1306_DISPLAYOFF);
+            setLED(false, false);
+            inputBuffer = "";
+            currentState = STATE_SLEEP;
+            return;
+        } else if (outsideDetected) {
             markActivity();
         }
     }
@@ -239,26 +207,11 @@ void handleIdle() {
 
     if (FINGERPRINT_EN) {
         int fpId = verifyFingerprint();
-        
         if (fpId >= 0) {
-            markActivity();
-            // OLED 顯示成功的 ID 與分數
-            String scoreMsg = "Score: " + String(finger.confidence);
-            ui.showMessage("FP Match ID:" + String(fpId), scoreMsg);
-            delay(1000); // 暫停 1 秒讓你能在畫面上看清楚分數
-            
-            successUnlock("Fingerprint #" + String(fpId), nullptr);
-            
+            successUnlock("指紋 #" + String(fpId), nullptr);
         } else if (fpId == -1) {
-            markActivity();
-            // OLED 顯示失敗，順便秀出剛剛判斷的低分數 (如果有的話)
-            String failMsg = "Score: " + String(finger.confidence);
-            ui.showMessage("FP Denied", failMsg);
-            delay(1000); // 暫停 1 秒讓你能在畫面上看清楚分數
-            
             failedAttempt();
         }
-        // fpId == -2 (沒放好或沒放手指) 則不處理
     }
 
     static unsigned long lastFaceCheck = 0;
@@ -284,20 +237,11 @@ void handleFaceCheck() {
     if (result.recognized) {
         markActivity();
         successUnlock(result.name, fb);
-    } else if (result.face_detected) {
-        if (STRANGER_ALERT_EN) {
-            Serial.println("⚠️ 偵測到陌生人！");
-            static unsigned long lastAlert = 0;
-            if (millis() - lastAlert > 30000) {
-                lastAlert = millis();
-                markActivity();
-                struct tm t;
-                getLocalTime(&t);
-                char timeStr[32];
-                strftime(timeStr, 32, "%Y/%m/%d %H:%M:%S", &t);
-                String caption = "⚠️ 陌生人警報！\n時間: " + String(timeStr);
-                sendTelegramPhoto(fb, caption);
-            }
+    } else if (result.face_detected && STRANGER_ALERT_EN) {
+        static unsigned long lastAlert = 0;
+        if (millis() - lastAlert > 30000) {
+            lastAlert = millis();
+            sendTelegramPhoto(fb, "⚠️ 陌生人警報！");
         }
     }
     faceSystem.returnFrame(fb);
@@ -309,26 +253,22 @@ void checkPendingEnrollWrapper(camera_fb_t* fb) {
     static int enrollCount = 0;
     if (pendingStart == 0) {
         pendingStart = millis();
-        enrollCount = 0;
-        Serial.printf("[TG 登錄] 開始：%s\n", pendingEnrollName.c_str());
+        Serial.printf("[登錄] 開始：%s\n", pendingEnrollName.c_str());
     }
     if (millis() - pendingStart > 30000) {
         pendingEnroll = false;
         pendingStart = 0;
-        enrollCount = 0;
-        sendTelegramMessage("⏰ 登錄逾時：" + pendingEnrollName + "\n請重新使用 /face_enroll 指令");
+        sendTelegramMessage("⏰ 登錄逾時");
         return;
     }
     bool ok = faceSystem.enroll(fb, pendingEnrollName);
     if (ok) {
         enrollCount++;
-        Serial.printf("[TG 登錄] %s 第 %d/%d 張\n", pendingEnrollName.c_str(), enrollCount, FACE_ENROLL_SAMPLES);
         if (enrollCount >= FACE_ENROLL_SAMPLES) {
             pendingEnroll = false;
             pendingStart = 0;
             enrollCount = 0;
-            sendTelegramMessage("✅ 人臉登錄完成：" + pendingEnrollName + "\n儲 " + String(FACE_ENROLL_SAMPLES) + " 張樣本");
-            Serial.printf("[TG 登錄] 完成：%s\n", pendingEnrollName.c_str());
+            sendTelegramMessage("✅ 登錄完成：" + pendingEnrollName);
         }
     }
 }
@@ -340,14 +280,11 @@ void handleUnlocked() {
     static int lastRemaining = -1;
     if (remaining != lastRemaining) {
         lastRemaining = remaining;
-        String msg = "Auto-lock in " + String(remaining) + "s";
-        String weather = WEATHER_NOTIFY_EN ? getWeatherMessage(weatherCache) : "";
-        ui.showUnlocked(lastUnlockName, weather.length() > 0 ? weather : msg);
+        ui.showUnlocked(lastUnlockName, "Lock in " + String(remaining) + "s");
     }
     if (!isDoorUnlocked()) {
         setLED(false, false);
         currentState = STATE_IDLE;
-        lastRemaining = -1;
         Serial.println("🔒 已自動鎖門");
     }
 }
@@ -370,8 +307,7 @@ void handleAlarm() {
             failCount = 0;
             currentState = STATE_IDLE;
             setLED(false, false);
-            inputBuffer = "";
-            sendTelegramMessage("ℹ️ 警報已解除");
+            sendTelegramMessage("警報已解除");
         }
         inputBuffer = "";
     } else if (isDigit(key)) {
@@ -381,132 +317,68 @@ void handleAlarm() {
 
 void handleFaceMgmt() {
     ui.showFaceMenu(faceSystem.getCount());
-    markActivity();
     char key = waitForKey(PCF_KEYPAD_ADDR, 15000);
-    markActivity();
 
     if (key == '1') {
-        ui.showMessage("Add Face", "Use Telegram:\n/face_enroll [name]");
-        sendTelegramMessage("📷 請使用 Telegram 登錄：\n/face_enroll 姓名");
-        delay(3000);
+        ui.showMessage("Add Face", "Use Telegram");
+        sendTelegramMessage("📷 請使用 /face_enroll 姓名");
     } else if (key == '2') {
         startFingerprintEnrollment();
     } else if (key == '3') {
         auto list = faceSystem.getList();
-        if (list.empty()) ui.showMessage("No faces", "Database empty");
-        else ui.showList("Enrolled Faces", list);
-        delay(4000);
+        if (list.empty()) ui.showMessage("No faces", "Empty");
+        else ui.showList("Faces", list);
     } else if (key == '4') {
-        ui.showMessage("Confirm?", "Press # to delete ALL");
-        char c = waitForKey(PCF_KEYPAD_ADDR, 5000);
-        if (c == '#') {
+        if (waitForKey(PCF_KEYPAD_ADDR, 5000) == '#') {
             faceSystem.deleteAll();
-            faceDB.removeAll();
-            ui.showMessage("Done", "All faces deleted");
+            ui.showMessage("Done", "All deleted");
             playSoundAsync(SOUND_DENY);
-            delay(2000);
         }
     }
     if (key == '*' || key == 0) currentState = STATE_IDLE;
 }
 
-// ===== 指紋登錄（12 次按壓）=====
 void startFingerprintEnrollment() {
-    Serial.println("═══ 開始指紋登錄（12次） ═══");
-    sendTelegramMessage("👆 開始指紋登錄流程（12次按壓）...");
-    
-    ui.showMessage("FP Enroll", "Step 1:\nPress 12x");
-    Serial.println("步驟 1: 請按壓手指 12 次");
-    sendTelegramMessage("步驟 1: 請在指紋感測器上按壓手指\n需要按壓 12 次");
+    Serial.println("═══ 指紋登錄（12次） ═══");
+    ui.showMessage("FP Enroll", "Press 12x");
+    sendTelegramMessage("👆 指紋登錄：按壓 12 次");
     
     int fingerCount = 0;
-    const int maxTries = 30;
-    const int requiredPresses = 12;
-    
-    while (fingerCount < requiredPresses) {
+    while (fingerCount < 12) {
         if (finger.getImage() == FINGERPRINT_OK) {
-            int p = finger.image2Tz(1);
-            if (p == FINGERPRINT_OK) {
+            if (finger.image2Tz(1) == FINGERPRINT_OK) {
                 fingerCount++;
-                Serial.printf("✅ 第 %d/%d 次取像成功\n", fingerCount, requiredPresses);
-                sendTelegramMessage("✅ 第 " + String(fingerCount) + "/" + String(requiredPresses) + " 次成功");
-                playSoundAsync(SOUND_BEEP);
+                Serial.printf("✅ 第 %d/12 次\n", fingerCount);
             }
         }
         delay(100);
     }
     
-    ui.showMessage("FP Enroll", "Creating\nmodel...");
-    Serial.println("步驟 2: 建立指紋模型中...");
-    sendTelegramMessage("步驟 2: 建立指紋模型...");
-    
-    int modelResult = finger.createModel();
-    if (modelResult == FINGERPRINT_OK) {
-        Serial.println("✅ 模型建立成功");
-        sendTelegramMessage("✅ 指紋模型建立成功");
-        playSoundAsync(SOUND_UNLOCK);
-        
-        int storeResult = finger.storeModel(1);
-        if (storeResult == FINGERPRINT_OK) {
-            ui.showMessage("FP Enroll", "Success!\nID: 1");
-            Serial.println("✅ 指紋登錄成功！已儲存到 ID 1");
-            sendTelegramMessage("✅ 指紋登錄成功！\n已儲存到 ID: 1\n\n您現在可以使用指紋開門了！");
-        } else {
-            ui.showMessage("FP Error", "Store fail");
-            Serial.printf("❌ 儲存失敗，錯誤碼: %d\n", storeResult);
-            sendTelegramMessage("❌ 儲存失敗，錯誤碼: " + String(storeResult));
+    if (finger.createModel() == FINGERPRINT_OK) {
+        if (finger.storeModel(1) == FINGERPRINT_OK) {
+            ui.showMessage("FP OK!", "ID: 1");
+            sendTelegramMessage("✅ 指紋登錄成功！");
         }
-    } else {
-        ui.showMessage("FP Error", "Model fail");
-        Serial.printf("❌ 模型建立失敗，錯誤碼: %d\n", modelResult);
-        sendTelegramMessage("❌ 模型建立失敗，錯誤碼: " + String(modelResult));
     }
-    
     delay(3000);
 }
 
-// ===== 指紋偵測（7 秒）=====
 void startFingerprintVerify() {
-    Serial.println("═══ 指紋偵測（7秒）═══");
+    Serial.println("═══ 指紋偵測（7秒） ═══");
     ui.showMessage("FP Verify", "Place finger");
-    Serial.println("請按壓手指進行辨識");
     
     unsigned long startTime = millis();
-    const unsigned long timeout = 7000;
-    
-    while (millis() - startTime < timeout) {
+    while (millis() - startTime < 7000) {
         if (finger.getImage() == FINGERPRINT_OK) {
-            
-            // 1. 取得「狀態碼」，而不是 ID
-            int status = finger.fingerSearch(); 
-            
-            // 2. 必須嚴格比對狀態碼是否為 FINGERPRINT_OK (0)
-            if (status == FINGERPRINT_OK) {
-                
-                // 3. 狀態確定成功後，才去拿真正的 ID 與分數
-                int realId = finger.fingerID;
-                int score = finger.confidence;
-                
-                if (score >= 60) { // 加上信心門檻防護
-                    Serial.printf("✅ 指紋辨識成功！ID: %d, 分數: %d\n", realId, score);
-                    ui.showMessage("FP OK!", "ID: " + String(realId));
-                    successUnlock("Fingerprint #" + String(realId), nullptr);
-                    return; // 開門後結束偵測
-                } else {
-                    Serial.println("⚠️ 匹配成功但分數太低，拒絕開門");
-                }
-            } else {
-                // 如果 status 是 9 (找不到)，就會掉到這裡，不會亂開門了！
-                Serial.println("❌ 找不到匹配的指紋");
+            int fpId = finger.fingerSearch();
+            if (fpId >= 0) {
+                Serial.printf("✅ 指紋成功 ID: %d\n", fpId);
+                successUnlock("指紋 #" + String(fpId), nullptr);
+                return;
             }
-            
-            // 避免連續快速觸發，稍微延遲
-            delay(500); 
         }
-        delay(50);
+        delay(100);
     }
-    
-    Serial.println("❌ 指紋辨識逾時");
     ui.showMessage("FP Timeout", "Try again");
     delay(1500);
 }
@@ -514,76 +386,57 @@ void startFingerprintVerify() {
 void setup() {
     Serial.begin(115200);
     delay(2000);
-    Serial.println("╔════════════════════════════╗");
-    Serial.println("║  智慧門鎖 V2  啟動中...  ║");
-    Serial.println("╚════════════════════════════╝");
+    Serial.println("╔═══════════════════════╗");
+    Serial.println("║ 智慧門鎖 V2 啟動中 ║");
+    Serial.println("╚═══════════════════════╝");
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    Serial.println("✅ I2C 匯流排初始化完成");
-
     ui.begin();
-    ui.showMessage("Booting...", "Init hardware");
+    ui.showMessage("Booting...", "Init");
 
     pcf8574_init(PCF_KEYPAD_ADDR);
     pcf8574_init(PCF_STATUS_ADDR);
-    Serial.println("✅ PCF8574 初始化完成");
 
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, HIGH);
-    Serial.println("✅ 繼電器初始化（門已鎖緊）");
 
     battery.begin();
-
     pir.begin();
-    Serial.println("✅ 紅外線(PIR) 感測器初始化完成");
+    Serial.println("✅ PIR 初始化完成");
 
-    ui.showMessage("Booting...", "Camera init");
-    if (!faceSystem.initCamera()) {
-        ui.showMessage("ERROR", "Camera failed!");
-        delay(3000);
-    }
+    ui.showMessage("Booting...", "Camera");
+    faceSystem.initCamera();
+    faceDB.begin();
+    faceMgr.restoreDatabase();
 
-    ui.showMessage("Booting...", "Fingerprint");
-    if (!initFingerprint()) {
-        Serial.println("⚠️ AS608 指紋模組未找到，功能停用");
+    fpSerial.begin(AS608_BAUD, SERIAL_8N1, AS608_RX_PIN, AS608_TX_PIN);
+    if (!finger.verifyPassword()) {
+        Serial.println("⚠️ 指紋模組未找到");
     } else {
-        Serial.println("✅ AS608 指紋辨識模組初始化成功");
-        
-        // 🚀 加入這兩行，強制清空 AS608 肚子裡的所有資料！
-        finger.emptyDatabase();
-        Serial.println("🗑️ [系統維護] 已強制清空 AS608 內部所有幽靈指紋！");
+        Serial.println("✅ 指紋模組 OK");
     }
 
     initAudio();
 
-    ui.showMessage("Booting...", "Connect WiFi");
     bool wifiOK = connectWiFi();
     if (wifiOK) {
         syncTime();
         weatherCache = getWeather();
-        lastWeatherUpdate = millis();
     }
 
     playSound(SOUND_STARTUP);
     setLED(false, false);
 
-    lastActivityTime = millis();
-
     if (wifiOK) {
-        sendTelegramMessage(
-            "🔐 智慧門鎖 V2 已啟動（PIR 喚醒模式）\n"
-            "IP: " + WiFi.localIP().toString() + "\n"
-            "電量: " + battery.toDisplayString() + "\n" +
-            getCurrentDateTime()
-        );
+        sendTelegramMessage("🔐 智慧門鎖 V2 已啟動\nIP: " + WiFi.localIP().toString());
     }
 
-    ui.showMessage("Ready.", "Waiting nearby...");
+    ui.showMessage("Ready.", "Waiting...");
     delay(1500);
     ui.display.ssd1306_command(SSD1306_DISPLAYOFF);
 
     currentState = STATE_SLEEP;
-    Serial.println("✅ 啟動完成，進入休眠等待有人靠近...");
+    Serial.println("✅ 啟動完成");
 }
 
 void loop() {
@@ -602,24 +455,16 @@ void loop() {
 
     if (millis() - lastWeatherUpdate > WEATHER_UPDATE_MS) {
         lastWeatherUpdate = millis();
-        if (WiFi.status() == WL_CONNECTED)
-            weatherCache = getWeather();
+        if (WiFi.status() == WL_CONNECTED) weatherCache = getWeather();
     }
 
     static unsigned long lastBattCheck = 0;
     if (millis() - lastBattCheck > 30000) {
         lastBattCheck = millis();
         auto b = battery.getStatus(true);
-        if (b.lowBattery) {
-            static bool alerted = false;
-            if (!alerted) {
-                alerted = true;
-                if (currentState != STATE_SLEEP) playSoundAsync(SOUND_LOW_BATT);
-                sendTelegramMessage("⚡ 電量不足：" + String(b.percentage) + "%");
-            }
-        }
-        if (b.percentage < CRITICAL_BATTERY_PCT) {
-            setCpuFrequencyMhz(80);
+        if (b.lowBattery && currentState != STATE_SLEEP) {
+            playSoundAsync(SOUND_LOW_BATT);
+            sendTelegramMessage("⚡ 電量不足：" + String(b.percentage) + "%");
         }
     }
 
@@ -628,7 +473,7 @@ void loop() {
         case STATE_IDLE:       handleIdle();      break;
         case STATE_UNLOCKED:   handleUnlocked();  break;
         case STATE_ALARM:      handleAlarm();     break;
-        case STATE_FACE_MGMT:  handleFaceMgmt();  break;
+        case STATE_FACE_MGMT:  handleFaceMgmt(); break;
         default:               handleIdle();      break;
     }
 }
