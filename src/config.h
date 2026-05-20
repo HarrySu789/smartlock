@@ -21,7 +21,7 @@
 //  Telegram Bot
 // =============================================
 #define BOT_TOKEN          "8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s"   // 從 @BotFather 取得
-#define CHAT_ID            "1878400880" 
+#define CHAT_ID            "-5176866732"
 #define BOT_POLL_MS        3000             // 輪詢間隔（毫秒），勿低於 1000
 
 // =============================================

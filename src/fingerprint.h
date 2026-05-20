@@ -171,3 +171,18 @@ uint16_t getFingerprintCount() {
     }
     return count;
 }
+
+// ── 尋找下一個空閒的 ID ──
+int getNextFreeFingerprintID() {
+    if (!fpInitialized) return -1;
+    finger.getParameters();
+    
+    // AS608 的容量通常是 127 筆，我們從 ID 1 開始往上找
+    for (int i = 1; i <= finger.capacity; i++) {
+        // 如果載入失敗，代表這個位置目前沒有指紋，是空的！
+        if (finger.loadModel(i) != FINGERPRINT_OK) {
+            return i;
+        }
+    }
+    return -1; // 回傳 -1 代表 127 個位置全部都存滿了
+}

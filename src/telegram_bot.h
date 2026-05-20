@@ -27,6 +27,15 @@ extern unsigned long          unlockTimestamp;
 WiFiClientSecure tgClient;
 UniversalTelegramBot bot(BOT_TOKEN, tgClient);
 
+// ── TLS 初始化（只執行一次）──────────────────
+void initTelegramTLS() {
+    static bool isInit = false;
+    if (!isInit) {
+        tgClient.setInsecure();
+        isInit = true;
+    }
+}
+
 // 待登錄人臉名稱（Telegram 遠端設定後，鏡頭前觸發）
 String pendingEnrollName = "";
 bool   pendingEnroll     = false;
@@ -34,7 +43,7 @@ bool   pendingEnroll     = false;
 // ── 傳送文字訊息 ──────────────────────────────
 void sendTelegramMessage(const String& text) {
     if (WiFi.status() != WL_CONNECTED) return;
-    tgClient.setInsecure();
+    initTelegramTLS();
     bot.sendMessage(CHAT_ID, text, "");
     Serial.println("[TG 發送] " + text.substring(0, 60));
 }
@@ -124,7 +133,7 @@ void sendTelegramPhoto(camera_fb_t* fb, const String& caption) {
 void handleTelegramCommands() {
     if (WiFi.status() != WL_CONNECTED) return;
 
-    tgClient.setInsecure();
+    initTelegramTLS();
     int count = bot.getUpdates(bot.last_message_received + 1);
 
     for (int i = 0; i < count; i++) {
@@ -317,6 +326,12 @@ void handleTelegramCommands() {
             bot.sendMessage(CHAT_ID,
                 "❓ 未知指令：" + text + "\n輸入 /help 查看說明", "");
         }
+    }
+
+    // ── 關鍵防護：釋放 SSL 連線 ─────────────────
+    if (count > 0) {
+        // 強制關閉並釋放 SSL 緩衝區，確保下次 polling 是乾淨的全新連線
+        tgClient.stop();
     }
 }
 

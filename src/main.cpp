@@ -364,13 +364,25 @@ void handleFaceMgmt() {
 
 void startFingerprintEnrollment() {
     Serial.println("═══ 指紋登錄 ═══");
-    ui.showMessage("FP Enroll", "Starting...");
-    sendTelegramMessage("👆 開始指紋登錄...");
     
-    // 使用安全的封裝函數
-    if (enrollFingerprint(1)) {
-        ui.showMessage("FP OK!", "ID: 1");
-        sendTelegramMessage("✅ 指紋登錄成功！");
+    // 1. 先找出目前空著的 ID 是幾號
+    int freeId = getNextFreeFingerprintID();
+    
+    if (freeId == -1) {
+        ui.showMessage("FP Full", "Delete some");
+        sendTelegramMessage("❌ 指紋容量已滿 (127 筆)，請先刪除部分指紋！");
+        delay(3000);
+        return; // 容量滿了就直接退出
+    }
+
+    // 2. 顯示即將存入的 ID
+    ui.showMessage("FP Enroll", "ID: " + String(freeId));
+    sendTelegramMessage("👆 開始指紋登錄 (將配發專屬 ID: " + String(freeId) + ")...");
+    
+    // 3. 把找到的空位 ID 傳進去登錄
+    if (enrollFingerprint(freeId)) {
+        ui.showMessage("FP OK!", "ID: " + String(freeId));
+        sendTelegramMessage("✅ 指紋登錄成功！您的專屬 ID 為：" + String(freeId));
     } else {
         ui.showMessage("FP Fail", "Try again");
         sendTelegramMessage("❌ 指紋登錄失敗，請重試");
