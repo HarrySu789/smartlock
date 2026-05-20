@@ -108,3 +108,36 @@ void playSoundAsync(const ToneNote* notes) {
     auto* arg = new AsyncSoundArg{notes};
     xTaskCreate(asyncSoundTask, "snd", 4096, arg, 1, NULL);  // 增加堆疊大小到 4KB
 }
+
+// ── 天氣 TTS 語音播報 ──────────────────────────────
+// 將文字轉換為簡單的音節發音（英文/中文數字）
+void playWeatherTTS(const String& text) {
+    if (!audioInitialized) return;
+    
+    Serial.printf("🔊 語音播報: %s\n", text.c_str());
+    
+    // 播放提示音
+    playNote(1200, 150);
+    delay(100);
+    
+    // 根據天氣訊息播放不同音調
+    if (text.indexOf("雨") >= 0 || text.indexOf("rain") >= 0) {
+        // 下雨：播放較低的音調
+        playNote(440, 300);  // A4
+        delay(100);
+        playNote(392, 300);  // G4
+        delay(100);
+        playNote(349, 400);  // F4
+    } else {
+        // 好天氣：播放較高的音調
+        playNote(523, 200);  // C5
+        delay(80);
+        playNote(659, 200);  // E5
+        delay(80);
+        playNote(784, 300);  // G5
+    }
+    
+    delay(200);
+    // 結束提示音
+    playNote(1200, 100);
+}

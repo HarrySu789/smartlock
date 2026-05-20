@@ -27,10 +27,10 @@ public:
     }
 
     // ── 讀取門外 PIR 狀態 ────────────────────────────
-    // 注意：HC-SR501 未偵測到移動時輸出 HIGH，偵測到時輸出 LOW
+    // 注意：HC-SR501 偵測到人體時輸出 HIGH，無人時輸出 LOW
     // 回傳：true = 偵測到移動，false = 無移動
     bool isOutsideDetected() {
-        return digitalRead(PIR_OUT_PIN) == LOW;
+        return digitalRead(PIR_OUT_PIN) == HIGH;
     }
 
     // ── 讀取門內 PIR 狀態 ────────────────────────────
@@ -45,7 +45,7 @@ public:
 
         // 讀取狀態
         status = pcf8574_read(PCF_STATUS_ADDR);
-        return (status & (1 << PIR_IN_P)) == 0;  // PIR 輸出為 LOW 表示偵測到
+        return (status & (1 << PIR_IN_P)) != 0;  // PIR 輸出為 HIGH 表示偵測到
     }
 
     // ── 讀取兩個 PIR 狀態 ───────────────────────────

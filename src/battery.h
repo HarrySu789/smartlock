@@ -44,7 +44,7 @@ public:
     
     // 取得電池狀態（每 30 秒更新一次）
     Status getStatus(bool forceUpdate = false) {
-        if (!forceUpdate && millis() - lastCheck < 30000) {
+        if (!forceUpdate && millis() - lastCheck < 300000) {
             return cachedStatus;
         }
         lastCheck = millis();

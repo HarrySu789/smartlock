@@ -71,6 +71,8 @@ void setLED(bool green, bool red) {
     status &= ~(1 << LED_RED_P);
     if (!green) status |= (1 << LED_GREEN_P);
     if (!red)   status |= (1 << LED_RED_P);
+    // 保護 PIR_IN_P 腳位，永遠保持為輸入模式（HIGH）
+    status |= (1 << PIR_IN_P);
     pcf8574_write(PCF_STATUS_ADDR, status);
 }
 
@@ -148,10 +150,20 @@ void handleSleep() {
     if (millis() - lastPIRCheck < 500) return;
     lastPIRCheck = millis();
 
+    // 門外 PIR 檢測
     if (pir.isOutsideDetected()) {
         Serial.println("👤 門外偵測到人體，喚醒系統");
         ui.showMessage("Someone outside!", "Wake up");
         playSoundAsync(SOUND_BEEP);
+        currentState = STATE_IDLE;
+        lastActivityTime = millis();
+        return;
+    }
+
+    // 門內 PIR 檢測（喚醒系統以進行天氣播報）
+    if (pir.isInsideDetected()) {
+        Serial.println("🏠 門內偵測到人體，喚醒系統");
+        ui.showMessage("Someone inside!", "Wake up");
         currentState = STATE_IDLE;
         lastActivityTime = millis();
     }
@@ -163,13 +175,25 @@ void handleIdle() {
         
         // 門內 PIR 檢查
         if (pir.isInsideDetected()) {
-            Serial.println("⚠️ 門內 PIR 偵測到！");
+        
             unsigned long now = millis();
             if (now - lastWeatherAnnounceTime > (PIR_COOLDOWN_SEC * 1000UL)) {
                 lastWeatherAnnounceTime = now;
                 Serial.println("🏠 門內偵測到人體，播報天氣");
                 if (WEATHER_NOTIFY_EN && weatherCache.valid) {
                     ui.showMessage("Weather:", getWeatherMessage(weatherCache));
+                    
+                    // 組合天氣 TTS 語音訊息
+                    String speech = "您好，目前溫度 ";
+                    speech += String((int)weatherCache.temp);
+                    speech += " 度。";
+                    if (weatherCache.rainToday) {
+                        speech += "外面有雨，出門請記得帶傘喔！";
+                    } else {
+                        speech += "天氣不錯，祝您出門平安！";
+                    }
+                    // 執行語音播報
+                    playWeatherTTS(speech);
                 }
             }
         }
@@ -448,9 +472,9 @@ void loop() {
     }
 
     static unsigned long lastBattCheck = 0;
-    if (millis() - lastBattCheck > 30000) {
+    if (millis() - lastBattCheck > 300000) {
         lastBattCheck = millis();
-        auto b = battery.getStatus(true);
+        auto b = battery.getStatus(false);
         if (b.lowBattery && currentState != STATE_SLEEP) {
             playSoundAsync(SOUND_LOW_BATT);
             sendTelegramMessage("⚡ 電量不足：" + String(b.percentage) + "%");
