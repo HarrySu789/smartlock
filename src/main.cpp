@@ -339,27 +339,19 @@ void handleFaceMgmt() {
 }
 
 void startFingerprintEnrollment() {
-    Serial.println("═══ 指紋登錄（12次） ═══");
-    ui.showMessage("FP Enroll", "Press 12x");
-    sendTelegramMessage("👆 指紋登錄：按壓 12 次");
+    Serial.println("═══ 指紋登錄 ═══");
+    ui.showMessage("FP Enroll", "Starting...");
+    sendTelegramMessage("👆 開始指紋登錄...");
     
-    int fingerCount = 0;
-    while (fingerCount < 12) {
-        if (finger.getImage() == FINGERPRINT_OK) {
-            if (finger.image2Tz(1) == FINGERPRINT_OK) {
-                fingerCount++;
-                Serial.printf("✅ 第 %d/12 次\n", fingerCount);
-            }
-        }
-        delay(100);
+    // 使用安全的封裝函數
+    if (enrollFingerprint(1)) {
+        ui.showMessage("FP OK!", "ID: 1");
+        sendTelegramMessage("✅ 指紋登錄成功！");
+    } else {
+        ui.showMessage("FP Fail", "Try again");
+        sendTelegramMessage("❌ 指紋登錄失敗，請重試");
     }
     
-    if (finger.createModel() == FINGERPRINT_OK) {
-        if (finger.storeModel(1) == FINGERPRINT_OK) {
-            ui.showMessage("FP OK!", "ID: 1");
-            sendTelegramMessage("✅ 指紋登錄成功！");
-        }
-    }
     delay(3000);
 }
 
@@ -369,13 +361,12 @@ void startFingerprintVerify() {
     
     unsigned long startTime = millis();
     while (millis() - startTime < 7000) {
-        if (finger.getImage() == FINGERPRINT_OK) {
-            int fpId = finger.fingerSearch();
-            if (fpId >= 0) {
-                Serial.printf("✅ 指紋成功 ID: %d\n", fpId);
-                successUnlock("指紋 #" + String(fpId), nullptr);
-                return;
-            }
+        // 使用安全的封裝函數
+        int fpId = verifyFingerprint();
+        if (fpId >= 0) {
+            Serial.printf("✅ 指紋成功 ID: %d\n", fpId);
+            successUnlock("指紋 #" + String(fpId), nullptr);
+            return;
         }
         delay(100);
     }
@@ -387,7 +378,7 @@ void setup() {
     Serial.begin(115200);
     delay(2000);
     Serial.println("╔═══════════════════════╗");
-    Serial.println("║ 智慧門鎖 V2 啟動中 ║");
+    Serial.println("║ 智慧門鎖 V2 啟動中     ║");
     Serial.println("╚═══════════════════════╝");
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
@@ -409,11 +400,9 @@ void setup() {
     faceDB.begin();
     faceMgr.restoreDatabase();
 
-    fpSerial.begin(AS608_BAUD, SERIAL_8N1, AS608_RX_PIN, AS608_TX_PIN);
-    if (!finger.verifyPassword()) {
+    ui.showMessage("Booting...", "Fingerprint");
+    if (!initFingerprint()) {
         Serial.println("⚠️ 指紋模組未找到");
-    } else {
-        Serial.println("✅ 指紋模組 OK");
     }
 
     initAudio();
