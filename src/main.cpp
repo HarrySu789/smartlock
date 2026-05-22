@@ -1,4 +1,4 @@
-// src/main.cpp - 智慧門鎖主程式（PIR 人體感測器版）
+// src/main.cpp - 智慧門鎖主程式
 #include <Arduino.h>
 #include <Wire.h>
 #include "config.h"
@@ -71,7 +71,7 @@ void setLED(bool green, bool red) {
     status &= ~(1 << LED_RED_P);
     if (!green) status |= (1 << LED_GREEN_P);
     if (!red)   status |= (1 << LED_RED_P);
-    // 保護 PIR_IN_P 腳位，永遠保持為輸入模式（HIGH）
+    // 保護 PIR_IN_P 腳位
     status |= (1 << PIR_IN_P);
     pcf8574_write(PCF_STATUS_ADDR, status);
 }
@@ -146,6 +146,39 @@ void handleKeyInput(char key) {
     }
 }
 
+// ── 新增：將天氣播報獨立成一個函式，避免程式碼重複 ──
+void checkAndAnnounceWeather() {
+    unsigned long now = millis();
+    // 檢查是否通過冷卻時間
+    if (now - lastWeatherAnnounceTime > (PIR_COOLDOWN_SEC * 1000UL)) {
+        lastWeatherAnnounceTime = now;
+        Serial.println("🏠 觸發室內播報天氣邏輯");
+        
+        if (WEATHER_NOTIFY_EN && weatherCache.valid) {
+            // 螢幕照常顯示氣溫與天氣
+            ui.showMessage("Weather:", getWeatherMessage(weatherCache));
+            
+            // 🚀 改良版判斷邏輯：優先檢查天氣描述，最後檢查是否下雨
+            String desc = weatherCache.description; // 假設這是一個 String
+            
+            // 優先檢查是否有「雨」相關描述
+            if (desc.indexOf("雨") >= 0 || desc.indexOf("Rain") >= 0 || weatherCache.rainToday) {
+                playWavSync("/tts/rain.wav");
+            } 
+            // 接著檢查雲或陰
+            else if (desc.indexOf("雲") >= 0 || desc.indexOf("陰") >= 0 || 
+                     desc.indexOf("Cloud") >= 0 || desc.indexOf("Clouds") >= 0) {
+                playWavSync("/tts/cloudy.wav");
+            } 
+            // 最後才是晴天
+            else {
+                playWavSync("/tts/sunny.wav");
+            }
+        }
+    }
+}
+
+// ── 修改後的休眠處理 ──
 void handleSleep() {
     if (millis() - lastPIRCheck < 500) return;
     lastPIRCheck = millis();
@@ -160,45 +193,29 @@ void handleSleep() {
         return;
     }
 
-    // 門內 PIR 檢測（喚醒系統以進行天氣播報）
+    // 門內 PIR 檢測（喚醒系統並「同時」播報天氣）
     if (pir.isInsideDetected()) {
         Serial.println("🏠 門內偵測到人體，喚醒系統");
-        ui.showMessage("Someone inside!", "Wake up");
         currentState = STATE_IDLE;
         lastActivityTime = millis();
+        
+        // 🚀 喚醒的瞬間，直接強制執行天氣播報檢查
+        checkAndAnnounceWeather();
     }
 }
 
+// ── 修改後的待機處理 ──
 void handleIdle() {
     if (millis() - lastPIRCheck >= 500) {
         lastPIRCheck = millis();
         
-        // 門內 PIR 檢查
+        // 門內 PIR 檢查 (待機狀態下有人經過)
         if (pir.isInsideDetected()) {
-        
-            unsigned long now = millis();
-            if (now - lastWeatherAnnounceTime > (PIR_COOLDOWN_SEC * 1000UL)) {
-                lastWeatherAnnounceTime = now;
-                Serial.println("🏠 門內偵測到人體，播報天氣");
-                if (WEATHER_NOTIFY_EN && weatherCache.valid) {
-                    ui.showMessage("Weather:", getWeatherMessage(weatherCache));
-                    
-                    // 組合天氣 TTS 語音訊息
-                    String speech = "您好，目前溫度 ";
-                    speech += String((int)weatherCache.temp);
-                    speech += " 度。";
-                    if (weatherCache.rainToday) {
-                        speech += "外面有雨，出門請記得帶傘喔！";
-                    } else {
-                        speech += "天氣不錯，祝您出門平安！";
-                    }
-                    // 執行語音播報
-                    playWeatherTTS(speech);
-                }
-            }
+            checkAndAnnounceWeather();
+            markActivity(); // 更新活動時間，避免播報完馬上又睡著
         }
 
-        // 門外 PIR 檢查進入休眠
+        // 門外 PIR 檢查與自動休眠邏輯
         bool outsideDetected = pir.isOutsideDetected();
         if (!outsideDetected && (millis() - lastActivityTime) / 1000 >= SLEEP_TIMEOUT_SEC) {
             Serial.printf("💤 %d 秒無人就入休眠\n", SLEEP_TIMEOUT_SEC);
@@ -213,6 +230,8 @@ void handleIdle() {
             markActivity();
         }
     }
+    
+    // ... 下方的 OLED 顯示、鍵盤掃描、指紋掃描等程式碼保持原樣不動 ...
 
     static unsigned long lastDisplayUpdate = 0;
     if (millis() - lastDisplayUpdate > 1000) {
@@ -365,24 +384,23 @@ void handleFaceMgmt() {
 void startFingerprintEnrollment() {
     Serial.println("═══ 指紋登錄 ═══");
     
-    // 1. 先找出目前空著的 ID 是幾號
+    // 取得下一個空閒的指紋 ID
     int freeId = getNextFreeFingerprintID();
-    
-    if (freeId == -1) {
-        ui.showMessage("FP Full", "Delete some");
-        sendTelegramMessage("❌ 指紋容量已滿 (127 筆)，請先刪除部分指紋！");
-        delay(3000);
-        return; // 容量滿了就直接退出
+    if (freeId < 0) {
+        ui.showMessage("FP Full!", "No space left");
+        sendTelegramMessage("❌ 指紋容量已滿，無法新增！請先刪除現有指紋。");
+        Serial.println("❌ 指紋容量已滿");
+        delay(2000);
+        return;
     }
-
-    // 2. 顯示即將存入的 ID
-    ui.showMessage("FP Enroll", "ID: " + String(freeId));
-    sendTelegramMessage("👆 開始指紋登錄 (將配發專屬 ID: " + String(freeId) + ")...");
     
-    // 3. 把找到的空位 ID 傳進去登錄
+    Serial.printf("=== 開始登錄指紋 ID #%d ===\n", freeId);
+    ui.showMessage("FP Enroll", "ID: " + String(freeId));
+    sendTelegramMessage("👆 開始指紋登錄...\n即將存入 ID: " + String(freeId));
+    
     if (enrollFingerprint(freeId)) {
         ui.showMessage("FP OK!", "ID: " + String(freeId));
-        sendTelegramMessage("✅ 指紋登錄成功！您的專屬 ID 為：" + String(freeId));
+        sendTelegramMessage("✅ 指紋登錄成功！\nID: " + String(freeId));
     } else {
         ui.showMessage("FP Fail", "Try again");
         sendTelegramMessage("❌ 指紋登錄失敗，請重試");
@@ -397,7 +415,6 @@ void startFingerprintVerify() {
     
     unsigned long startTime = millis();
     while (millis() - startTime < 7000) {
-        // 使用安全的封裝函數
         int fpId = verifyFingerprint();
         if (fpId >= 0) {
             Serial.printf("✅ 指紋成功 ID: %d\n", fpId);
@@ -415,7 +432,14 @@ void setup() {
     delay(2000);
     Serial.println("╔═══════════════════════╗");
     Serial.println("║ 智慧門鎖 V2 啟動中     ║");
-    Serial.println("╚═══════════════════════╝");
+    Serial.println("╚══════════════════════╝");
+
+    // 🚀 關鍵補丁：啟動 SPIFFS 檔案系統
+    if (!SPIFFS.begin(true)) {
+        Serial.println("❌ SPIFFS 掛載失敗！WAV 將無法播放");
+    } else {
+        Serial.println("✅ SPIFFS 掛載成功");
+    }
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     ui.begin();
@@ -433,6 +457,9 @@ void setup() {
 
     ui.showMessage("Booting...", "Camera");
     faceSystem.initCamera();
+    
+    // 注意：如果你的 faceDB.begin() 裡面已經有偷偷呼叫 SPIFFS.begin()，
+    // 在上面多呼叫一次也不會當機，這樣寫是最保險的。
     faceDB.begin();
     faceMgr.restoreDatabase();
 
@@ -441,6 +468,7 @@ void setup() {
         Serial.println("⚠️ 指紋模組未找到");
     }
 
+    // 初始化音頻系統 (確保你在 audio.h 已經把通訊格式改成 MSB 了！)
     initAudio();
 
     bool wifiOK = connectWiFi();
@@ -462,8 +490,16 @@ void setup() {
 
     currentState = STATE_SLEEP;
     Serial.println("✅ 啟動完成");
-}
 
+    // 檔案偵測邏輯 (保持原樣，現在它能正確讀到檔案了)
+    File root = SPIFFS.open("/"); 
+    File file = root.openNextFile();
+    while(file){
+        Serial.print("系統內找到檔案: ");
+        Serial.println(file.name()); 
+        file = root.openNextFile();
+    }
+}
 void loop() {
     maintainWiFi();
 
@@ -498,7 +534,7 @@ void loop() {
         case STATE_IDLE:       handleIdle();      break;
         case STATE_UNLOCKED:   handleUnlocked();  break;
         case STATE_ALARM:      handleAlarm();     break;
-        case STATE_FACE_MGMT:  handleFaceMgmt(); break;
+        case STATE_FACE_MGMT:  handleFaceMgmt();  break;
         default:               handleIdle();      break;
     }
 }

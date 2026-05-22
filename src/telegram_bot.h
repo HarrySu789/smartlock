@@ -206,6 +206,12 @@ void handleTelegramCommands() {
             currentState = STATE_IDLE;
             bot.sendMessage(CHAT_ID, "🔕 警報已由 Telegram 解除", "");
         }
+        // ── /sleep ────────────────────────────
+        else if (text == "/sleep") {
+            currentState = STATE_SLEEP;
+            bot.sendMessage(fromId, "💤 系統已手動進入休眠模式", "");
+            Serial.println("[TG] 系統已手動進入休眠模式");
+        }
         // ── /set_password [新密碼] ────────────
         else if (text.startsWith("/set_password ")) {
             String newPwd = text.substring(14);
@@ -306,7 +312,8 @@ void handleTelegramCommands() {
             h += "🔑 *門鎖控制*\n";
             h += "/unlock — 遠端開鎖 5 秒\n";
             h += "/status — 系統狀態\n";
-            h += "/alarm_off — 解除警報\n\n";
+            h += "/alarm_off — 解除警報\n";
+            h += "/sleep — 手動進入休眠\n\n";
             h += "👤 *人臉管理*\n";
             h += "/face_list — 列出所有人臉\n";
             h += "/face_enroll [名稱] — 登錄人臉\n";
