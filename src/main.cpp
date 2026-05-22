@@ -432,7 +432,7 @@ void setup() {
     delay(2000);
     Serial.println("╔═══════════════════════╗");
     Serial.println("║ 智慧門鎖 V2 啟動中     ║");
-    Serial.println("╚══════════════════════╝");
+    Serial.println("╚═══════════════════════╝");
 
     // 🚀 關鍵補丁：啟動 SPIFFS 檔案系統
     if (!SPIFFS.begin(true)) {
