@@ -1,6 +1,7 @@
 // src/main.cpp - 智慧門鎖主程式
 #include <Arduino.h>
 #include <Wire.h>
+#include <Preferences.h>
 #include "config.h"
 #include "pir_sensor.h"
 #include "face_recognition.h"
@@ -15,6 +16,9 @@
 #include "wifi_mgr.h"
 #include "weather.h"
 #include "telegram_bot.h"
+
+// ===== NVS 持久化儲存 =====
+Preferences preferences;
 
 // ===== 全域物件 =====
 OledUI                ui;
@@ -437,8 +441,12 @@ void setup() {
     Serial.println("╔═══════════════════════╗");
     Serial.println("║ 智慧門鎖 V2 啟動中     ║");
     Serial.println("╚═══════════════════════╝");
-    // 示意：在 main.cpp 的 setup() 中
-    connectWiFi(); // 假設這是你的 WiFi 連線函式
+
+    // ── NVS 初始化：讀取上次儲存的密碼 ──
+    preferences.begin("smartlock", false);
+    currentPassword = preferences.getString("pwd", DEFAULT_PASSWORD);
+    Serial.println("📦 從 Flash 載入密碼：" + currentPassword);
+
     flushPendingTelegramMessages(); // ➕ 加入這行，每次開機先通馬桶！
     // 🚀 關鍵補丁：啟動 SPIFFS 檔案系統
     if (!SPIFFS.begin(true)) {

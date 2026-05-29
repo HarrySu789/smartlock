@@ -1,6 +1,6 @@
 // src/telegram_bot.h
 // 8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s
-//檢視指令 https://api.telegram.org/bot8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s/getMyCommands
+//檢視指令 https://api.telegram.org/bot8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s/getUpdates
 //清除指令 https://api.telegram.org/bot8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s/deleteMyCommands
 #pragma once
 
@@ -17,6 +17,8 @@
 #include "face_recognition.h"
 #include "face_database.h"
 #include "fingerprint.h"
+#include <Preferences.h>
+
 // 外部物件（在 main.cpp 宣告）
 extern FaceRecognitionSystem faceSystem;
 extern FaceDatabase          faceDB;
@@ -176,12 +178,14 @@ void handleTelegramCommands() {
         String fromId = bot.messages[i].chat_id;
         String fromName = bot.messages[i].from_name;
 
+        text.trim();
+
         // ── 安全驗證：只接受授權的 Chat ID ──
-        if (fromId != String(CHAT_ID)) {
-            bot.sendMessage(fromId, "⛔ 未授權的存取", "");
-            Serial.printf("[TG 警告] 非授權存取來自 %s (%s)\n",
-                          fromName.c_str(), fromId.c_str());
-            sendTelegramMessage("⚠️ 警告：有未知用戶嘗試存取門鎖！\nID: " + fromId);
+        // 從 chat_id 取得群組ID（群組模式下有效）
+        String chatId = bot.messages[i].chat_id;
+        if (chatId != String(CHAT_ID)) {
+            Serial.printf("[TG 警告] 非授權存取來自 %s (chat: %s)\n",
+                          fromName.c_str(), chatId.c_str());
             continue;
         }
 
@@ -252,8 +256,13 @@ void handleTelegramCommands() {
             newPwd.trim();
             if (newPwd.length() >= 4 && newPwd.length() <= MAX_PASSWORD_LEN) {
                 currentPassword = newPwd;
-                bot.sendMessage(CHAT_ID, "✅ 密碼已更新為：" + newPwd + "\n請妥善保存！", "");
-                Serial.println("[安全] 密碼已透過 Telegram 更新");
+                
+                // 🛡️ 將新密碼永久寫入 Flash NVS，斷電也不會消失！
+                extern Preferences preferences;
+                preferences.putString("pwd", currentPassword);
+                
+                bot.sendMessage(CHAT_ID, "✅ 密碼已更新為：" + newPwd + "\n請妥善保存！斷電重啟後仍會生效。", "");
+                Serial.println("[安全] 密碼已透過 Telegram 更新並寫入 Flash");
             } else {
                 bot.sendMessage(CHAT_ID,
                     "❌ 密碼格式錯誤\n長度需為 4~" +

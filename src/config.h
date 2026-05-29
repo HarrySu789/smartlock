@@ -1,5 +1,6 @@
 // src/config.h
 //強制清空阻塞訊息https://api.telegram.org/bot8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s/deleteWebhook?drop_pending_updates=true
+//https://api.telegram.org/bot8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s/getUpdates
 #pragma once
 
 // 嘗試載入本地配置（如果存在）
