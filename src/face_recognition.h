@@ -196,7 +196,7 @@ public:
             {(int)fb->height, (int)fb->width, 3},
             faces.front().keypoint,
             name.c_str(),
-            true  // flash = true，儲存到記憶體
+            false  // flash = false，只儲存到記憶體（重啟後需重新註冊）
         );
 
         if (id >= 0) {

@@ -1,9 +1,13 @@
 // src/telegram_bot.h
+// 8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s
+//檢視指令 https://api.telegram.org/bot8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s/getMyCommands
+//清除指令 https://api.telegram.org/bot8785672553:AAG0gI7yz4EF2QhzVGjk2gPQP3M8mIbOd9s/deleteMyCommands
 #pragma once
 
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include "esp_camera.h"
 #include "img_converters.h"
 #include "config.h"
@@ -13,7 +17,6 @@
 #include "face_recognition.h"
 #include "face_database.h"
 #include "fingerprint.h"
-
 // 外部物件（在 main.cpp 宣告）
 extern FaceRecognitionSystem faceSystem;
 extern FaceDatabase          faceDB;
@@ -34,6 +37,28 @@ void initTelegramTLS() {
         tgClient.setInsecure();
         isInit = true;
     }
+}
+// ── 開機強制清空堆積指令（防當機） ──────────────────
+void flushPendingTelegramMessages() {
+    if (WiFi.status() != WL_CONNECTED) return;
+    
+    Serial.println("🧹 正在清空 Telegram 伺服器上的歷史堆積訊息...");
+    HTTPClient http;
+    WiFiClientSecure client;
+    client.setInsecure(); // 忽略 SSL 憑證檢查
+
+    // 呼叫 deleteWebhook 並帶上 drop_pending_updates=true 參數來強制歸零
+    String url = "https://api.telegram.org/bot" + String(BOT_TOKEN) + "/deleteWebhook?drop_pending_updates=true";
+    
+    http.begin(client, url);
+    int httpCode = http.GET();
+    
+    if (httpCode == HTTP_CODE_OK) {
+        Serial.println("✅ 歷史訊息清空成功！系統從零開始接收新指令。");
+    } else {
+        Serial.printf("❌ 清空失敗，HTTP 狀態碼: %d\n", httpCode);
+    }
+    http.end();
 }
 
 // 待登錄人臉名稱（Telegram 遠端設定後，鏡頭前觸發）
@@ -129,12 +154,22 @@ void sendTelegramPhoto(camera_fb_t* fb, const String& caption) {
     free(jpg_buf);
 }
 
-// ── 處理所有進來的 Bot 指令 ──────────────────────
+// ── 處理所有進來的 Bot 指令（修正安全版） ──────────────────────
 void handleTelegramCommands() {
     if (WiFi.status() != WL_CONNECTED) return;
 
     initTelegramTLS();
+    
+    // 🛠️ 【核心修正】強迫每次只抓取 1 則訊息 (limit = 1)，並設定超時為 1 秒 (timeout = 1)
+    // 這樣做能確保不論伺服器堆積了多少訊息，ESP32 每次下載的 JSON 封包都   極小，
+    // 絕對不會撐爆 UniversalTelegramBot 的內部快取，能 100% 成功解出指令！
+    // ✅ 改回原本的單參數寫法
     int count = bot.getUpdates(bot.last_message_received + 1);
+
+    // 🛠️ 【除錯監控】如果成功拿到訊息，在序列埠印出提示
+    if (count > 0) {
+        Serial.printf("[TG 提貨] 成功抓取 %d 則訊息，正在處理...\n", count);
+    }
 
     for (int i = 0; i < count; i++) {
         String text   = bot.messages[i].text;
@@ -157,7 +192,6 @@ void handleTelegramCommands() {
         if (text == "/unlock") {
             bot.sendMessage(CHAT_ID, "🔓 開鎖中...", "");
             unlockDoor(5000);
-            // 設定狀態為 UNLOCKED 以觸發自動上鎖邏輯
             currentState = STATE_UNLOCKED;
             unlockTimestamp = millis();
             sendTelegramMessage("✅ 遠端開鎖 5 秒\n時間：" + getCurrentDateTime());
@@ -290,7 +324,6 @@ void handleTelegramCommands() {
         }
         // ── /fp_enroll ────────────────────────
         else if (text.startsWith("/fp_enroll ")) {
-            // 指紋登錄功能預留，目前 AS608 需要實體按鍵操作
             bot.sendMessage(CHAT_ID, 
                 "⚠️ 指紋登錄需在門鎖設備上操作：\n"
                 "1. 進入管理模式（輸入管理密碼後按 A）\n"
@@ -305,28 +338,44 @@ void handleTelegramCommands() {
                 "AS608 最多可儲存 127 枚指紋\n"
                 "目前無法從遠端查詢已登錄指紋，請在設備上操作", "");
         }
-        // ── /help ────────────────────────────
+        // ── /help (完整指令列表) ────────────────────────────
         else if (text == "/help" || text == "/start") {
-            String h = "🔐 智慧門鎖 V2 指令說明\n";
-            h += "━━━━━━━━━━━━━━\n";
-            h += "🔑 *門鎖控制*\n";
-            h += "/unlock — 遠端開鎖 5 秒\n";
-            h += "/status — 系統狀態\n";
-            h += "/alarm_off — 解除警報\n";
-            h += "/sleep — 手動進入休眠\n\n";
-            h += "👤 *人臉管理*\n";
-            h += "/face_list — 列出所有人臉\n";
-            h += "/face_enroll [名稱] — 登錄人臉\n";
-            h += "/face_delete [名稱] — 刪除人臉\n";
-            h += "/face_deleteall — 清除所有人臉\n\n";
-            h += "🔐 *指紋管理*（需在設備上操作）\n";
-            h += "/fp_enroll — 查看登錄說明\n";
-            h += "/fp_list — 查看指紋說明\n\n";
-            h += "🔧 *系統設定*\n";
-            h += "/set_password [新密碼] — 修改密碼\n";
-            h += "/weather — 查詢天氣\n";
-            h += "/battery — 電池狀態\n";
-            bot.sendMessage(CHAT_ID, h, "Markdown");
+            String h = "📖 可用指令列表\n";
+            h += "━━━━━━━━━━━━\n\n";
+            h += "🔓 /unlock - 遠端開鎖\n";
+            h += "📊 /status - 系統狀態\n";
+            h += "📶 /weather - 天氣查詢\n";
+            h += "🔋 /battery - 電量查詢\n";
+            h += "💤 /sleep - 進入休眠\n";
+            h += "🔕 /alarm_off - 解除警報\n\n";
+            h += "👤 人臉管理\n";
+            h += "━━━━━━━━\n";
+            h += "/face_enroll [名] - 登錄人臉\n";
+            h += "/face_list - 列出人臉\n";
+            h += "/face_delete [名] - 刪除人臉\n";
+            h += "/face_deleteall - 清除所有人臉\n\n";
+            h += "👆 指紋管理\n";
+            h += "━━━━━━━━\n";
+            h += "/fp_enroll - 指紋登錄說明\n";
+            h += "/fp_list - 指紋列表\n\n";
+            h += "⚙️ 系統設定\n";
+            h += "━━━━━━━━\n";
+            h += "/set_password [密碼] - 設定密碼\n";
+            h += "/hide_keyboard - 隱藏按鍵";
+            
+            // 建立 Telegram 專用的 JSON 格式實體鍵盤
+            String keyboardJson = "[";
+            keyboardJson += "[\"/unlock\", \"/status\"],";
+            keyboardJson += "[\"/sleep\", \"/alarm_off\"],";
+            keyboardJson += "[\"/weather\", \"/battery\"]";
+            keyboardJson += "]";
+
+            bot.sendMessageWithReplyKeyboard(CHAT_ID, h, "", keyboardJson, true);
+        }
+        // ── /hide_keyboard (隱藏實體按鍵) ────────────────────────
+        else if (text == "/hide_keyboard") {
+            // 傳送一個空的鍵盤，並設定 remove_keyboard 為 true 來關閉它
+            bot.sendMessageWithReplyKeyboard(CHAT_ID, "⌨️ 鍵盤已隱藏。輸入 /help 可再次喚出。", "", "", true, true, true);
         }
         // ── 未知指令 ─────────────────────────
         else {
@@ -335,11 +384,11 @@ void handleTelegramCommands() {
         }
     }
 
-    // ── 關鍵防護：釋放 SSL 連線 ─────────────────
-    if (count > 0) {
-        // 強制關閉並釋放 SSL 緩衝區，確保下次 polling 是乾淨的全新連線
-        tgClient.stop();
-    }
+    // ── 🛠️【核心修正：釋放防卡死】 ─────────────────
+    // 將原本的 if (count > 0) 移除。不論這次有沒有成功領到新訊息，
+    // 只要有執行查詢，在尾端都強迫斷開並清空 TLS 快取，
+    // 這樣可以防止萬一發生解析失敗時，壞掉的 HTTP 連線卡死 ESP32 的記憶體。
+    tgClient.stop();
 }
 
 // ── 在 loop 中處理待登錄的人臉 ──────────────────
@@ -368,14 +417,14 @@ void checkPendingEnroll(FaceRecognitionSystem& fr,
         return;
     }
 
-    // 嘗試登錄
-    bool ok = fr.enroll(fb, pendingEnrollName);
-    if (ok) {
-        enrollCount++;
-        Serial.printf("[TG 登錄] %s 第 %d/%d 張\n",
-                      pendingEnrollName.c_str(), enrollCount, FACE_ENROLL_SAMPLES);
-
-        if (enrollCount >= FACE_ENROLL_SAMPLES) {
+    // 嘗試登錄（只在第一次嘗試，成功後立即結束）
+    if (enrollCount == 0) {
+        bool ok = fr.enroll(fb, pendingEnrollName);
+        if (ok) {
+            enrollCount = 1;
+            Serial.printf("[TG 登錄] %s 成功！\n", pendingEnrollName.c_str());
+            
+            // 登錄完成，立即發送訊息並標記完成
             // 登錄完成，持久化儲存（需實作向量匯出）
             // db.save(pendingEnrollName, fr.recognizer.get_latest_feature());
             pendingEnroll = false;

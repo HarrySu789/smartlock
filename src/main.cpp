@@ -296,6 +296,7 @@ void checkPendingEnrollWrapper(camera_fb_t* fb) {
     static int enrollCount = 0;
     if (pendingStart == 0) {
         pendingStart = millis();
+        enrollCount = 0;
         Serial.printf("[登錄] 開始：%s\n", pendingEnrollName.c_str());
     }
     if (millis() - pendingStart > 30000) {
@@ -304,10 +305,12 @@ void checkPendingEnrollWrapper(camera_fb_t* fb) {
         sendTelegramMessage("⏰ 登錄逾時");
         return;
     }
-    bool ok = faceSystem.enroll(fb, pendingEnrollName);
-    if (ok) {
-        enrollCount++;
-        if (enrollCount >= FACE_ENROLL_SAMPLES) {
+    // 只嘗試一次，成功後立即結束
+    if (enrollCount == 0) {
+        bool ok = faceSystem.enroll(fb, pendingEnrollName);
+        if (ok) {
+            enrollCount = 1;
+            Serial.printf("[登錄] %s 成功！\n", pendingEnrollName.c_str());
             pendingEnroll = false;
             pendingStart = 0;
             enrollCount = 0;
@@ -428,12 +431,15 @@ void startFingerprintVerify() {
 }
 
 void setup() {
+    
     Serial.begin(115200);
     delay(2000);
     Serial.println("╔═══════════════════════╗");
     Serial.println("║ 智慧門鎖 V2 啟動中     ║");
     Serial.println("╚═══════════════════════╝");
-
+    // 示意：在 main.cpp 的 setup() 中
+    connectWiFi(); // 假設這是你的 WiFi 連線函式
+    flushPendingTelegramMessages(); // ➕ 加入這行，每次開機先通馬桶！
     // 🚀 關鍵補丁：啟動 SPIFFS 檔案系統
     if (!SPIFFS.begin(true)) {
         Serial.println("❌ SPIFFS 掛載失敗！WAV 將無法播放");
