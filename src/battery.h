@@ -44,23 +44,24 @@ public:
     
     // 取得電池狀態（每 30 秒更新一次）
     Status getStatus(bool forceUpdate = false) {
-        if (!forceUpdate && millis() - lastCheck < 300000) {
+        // 加入 lastCheck == 0 讓開機第一次一定會強迫讀取
+        if (!forceUpdate && lastCheck != 0 && (millis() - lastCheck < 60000)) {
             return cachedStatus;
         }
         lastCheck = millis();
         
-        // 多次取樣取平均（ADC 有雜訊）
-        int sum = 0;
+        // 取得電池狀態 (改良版)
+        int sum_mv = 0;
         const int samples = 16;
         for (int i = 0; i < samples; i++) {
-            sum += analogRead(BATT_ADC_PIN);
+            // 直接讀取校準後的毫伏特 (mV)
+            sum_mv += analogReadMilliVolts(BATT_ADC_PIN);
             delay(2);
         }
-        int raw = sum / samples;
         
-        // 換算電壓
-        float adcVoltage = (float)raw / ADC_RESOLUTION * ADC_REF_VOLTAGE;
-        float battVoltage = adcVoltage * 2.0f;  // 分壓比 0.5，乘回來
+        // 計算實際電壓 (毫伏特平均值 / 1000 = 伏特，再乘以 2 補償分壓)
+        float adcVoltage = (float)(sum_mv / samples) / 1000.0f;
+        float battVoltage = adcVoltage * 2.0f;
         
         // 換算電量百分比（線性近似，18650 的放電曲線）
         int pct = voltageToPercent(battVoltage);
