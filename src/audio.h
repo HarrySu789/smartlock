@@ -319,7 +319,7 @@ void playWavSync(String filepath) {
             }
 
             // 降音量避免破音
-            sample = sample / 2; 
+            sample = sample / 4; 
 
             if (hdr.numChannels == 1) {
                 stereoBuf[i * 2]     = sample;

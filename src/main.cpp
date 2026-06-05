@@ -540,14 +540,22 @@ void loop() {
         if (WiFi.status() == WL_CONNECTED) weatherCache = getWeather();
     }
 
-    static unsigned long lastBattCheck = 0;
-    if (millis() - lastBattCheck > 300000) {
-        lastBattCheck = millis();
-        auto b = battery.getStatus(false);
-        if (b.lowBattery && currentState != STATE_SLEEP) {
-            playSoundAsync(SOUND_LOW_BATT);
-            sendTelegramMessage("⚡ 電量不足：" + String(b.percentage) + "%");
-        }
+    // 讓 OLED 螢幕的更新週期 (handleIdle 中) 來驅動底層的 ADC 讀取。
+    // 這裡我們只要監控 lowBattery 狀態是否「剛發生變化」，避免狂發 Telegram。
+    static bool hasSentLowBattAlert = false;
+    
+    // 從快取拿狀態 (每 60 秒底層會自動更新一次真實讀值)
+    auto b = battery.getStatus(false); 
+    
+    // 如果低於 20%，且還沒發過警報，且系統不是在深度睡眠
+    if (b.lowBattery && !hasSentLowBattAlert && currentState != STATE_SLEEP) {
+        playSoundAsync(SOUND_LOW_BATT);
+        sendTelegramMessage("⚡ 警告：門鎖電量不足 (" + String(b.percentage) + "%)\n請盡速充電或更換電池！");
+        hasSentLowBattAlert = true; // 鎖住，不要重複發送
+    } 
+    // 如果電池充飽了或是換了新電池，解除警報鎖定
+    else if (!b.lowBattery && hasSentLowBattAlert) {
+        hasSentLowBattAlert = false; 
     }
 
     switch (currentState) {

@@ -3,26 +3,18 @@
 
 #include <Arduino.h>
 
-#define BATT_ADC_PIN    8    // GPIO8 (D9) ← 分壓器輸出
-#define BATT_CHRG_PIN   7    // GPIO7 (D8) ← TP4056 CHRG 腳位
-#define ADC_RESOLUTION  4095 // ESP32 12-bit ADC
-#define ADC_REF_VOLTAGE 3.3f // 參考電壓
-
-// 電池電壓對應的 ADC 值（分壓比 0.5）
-// ADC_VAL = (Battery_V / 2) / 3.3 * 4095
-#define BATT_FULL_ADC   2607  // 4.2V 滿電
-#define BATT_GOOD_ADC   2482  // 4.0V 良好
-#define BATT_MID_ADC    2296  // 3.7V 中等
-#define BATT_LOW_ADC    2172  // 3.5V 偏低
-#define BATT_CRIT_ADC   2048  // 3.3V 嚴重（需充電）
-
-// 低電量警告閾值
+#define BATT_ADC_PIN    8    // GPIO8 ← 接到 10k 與 4.7k 電阻的交界處 (測量點)
+// 如果沒有 TP5100 這類的充電模組，你可以先把 CHRG_PIN 註解掉
+// #define BATT_CHRG_PIN   7 
 #define LOW_BATTERY_THRESHOLD 20  // 電量 < 20% 時警告
+
+// 分壓電路參數 (8.4V -> 2.68V 安全降壓)
+// R1 = 10k ohm (接電池正極), R2 = 4.7k ohm (接 GND)
+const float VOLTAGE_DIVIDER_RATIO = (10000.0f + 4700.0f) / 4700.0f; // 約 3.127
 
 class BatteryMonitor {
 public:
     struct Status {
-        int rawADC;
         float voltage;
         int percentage;
         bool charging;
@@ -30,65 +22,58 @@ public:
     };
     
     unsigned long lastCheck = 0;
-    Status cachedStatus = {0, 0, 100, false, false};
+    Status cachedStatus = {0, 100, false, false};
     
     void begin() {
         pinMode(BATT_ADC_PIN, INPUT);
-        pinMode(BATT_CHRG_PIN, INPUT_PULLUP);  // 上拉（CHRG 為 active low）
         
-        // ESP32 ADC 校準（衰減 11dB 以支援到 3.3V 輸入）
+        // 如果有充電模組才啟用這行
+        // pinMode(BATT_CHRG_PIN, INPUT_PULLUP);  
+        
+        // ESP32 ADC 校準（衰減 11dB 以支援到最高 3.1V 左右的輸入）
         analogSetAttenuation(ADC_11db);
         
-        Serial.println("✅ 電池監控初始化完成");
+        Serial.println("✅ 電池監控初始化完成 (支援 8.4V 架構)");
     }
     
-    // 取得電池狀態（每 30 秒更新一次）
     Status getStatus(bool forceUpdate = false) {
-        // 加入 lastCheck == 0 讓開機第一次一定會強迫讀取
-        if (!forceUpdate && lastCheck != 0 && (millis() - lastCheck < 60000)) {
+        if (!forceUpdate && lastCheck != 0 && (millis() - lastCheck < 2000)) {
             return cachedStatus;
         }
         lastCheck = millis();
         
-        // 取得電池狀態 (改良版)
+        // 16 次採樣濾波 (極好的寫法！)
         int sum_mv = 0;
         const int samples = 16;
         for (int i = 0; i < samples; i++) {
-            // 直接讀取校準後的毫伏特 (mV)
             sum_mv += analogReadMilliVolts(BATT_ADC_PIN);
             delay(2);
         }
         
-        // 計算實際電壓 (毫伏特平均值 / 1000 = 伏特，再乘以 2 補償分壓)
+        // 計算測量點實際電壓 (V)
         float adcVoltage = (float)(sum_mv / samples) / 1000.0f;
-        float battVoltage = adcVoltage * 2.0f;
         
-        // 換算電量百分比（線性近似，18650 的放電曲線）
+        // 乘回分壓倍率，還原電池真實總電壓
+        float battVoltage = adcVoltage * VOLTAGE_DIVIDER_RATIO;
+        
+        // 換算 2S 電池電量百分比
         int pct = voltageToPercent(battVoltage);
         
-        // 充電狀態（TP4056 CHRG = LOW 時正在充電）
-        bool isCharging = (digitalRead(BATT_CHRG_PIN) == LOW);
-        
-        // Calculate raw ADC value from sum_mv: (avg_mV / 3300) * 4095
-        int avg_mv = sum_mv / samples;
-        int rawADC = (avg_mv * ADC_RESOLUTION) / 3300;
+        // 如果有接充電模組的訊號腳位，可改為 digitalRead(BATT_CHRG_PIN) == LOW
+        bool isCharging = false; 
         
         cachedStatus = {
-            rawADC,
             battVoltage,
             pct,
             isCharging,
             (pct < LOW_BATTERY_THRESHOLD)
         };
         
-        Serial.printf("電池：%.2fV, %d%%, %s\n",
-                      battVoltage, pct,
-                      isCharging ? "充電中" : "使用中");
+        Serial.printf("🔋 電池狀態: %.2fV, %d%%\n", battVoltage, pct);
         
         return cachedStatus;
     }
     
-    // 格式化為顯示字串
     String toDisplayString() {
         auto s = getStatus();
         char buf[32];
@@ -102,12 +87,12 @@ public:
     
 private:
     int voltageToPercent(float v) {
-        // 18650 放電特性（近似曲線）
-        if (v >= 4.2f) return 100;
-        if (v >= 4.0f) return 75 + (v - 4.0f) / (4.2f - 4.0f) * 25;
-        if (v >= 3.7f) return 40 + (v - 3.7f) / (4.0f - 3.7f) * 35;
-        if (v >= 3.5f) return 15 + (v - 3.5f) / (3.7f - 3.5f) * 25;
-        if (v >= 3.3f) return  5 + (v - 3.3f) / (3.5f - 3.3f) * 10;
-        return 0;
+        // 2S (串聯兩顆) 18650 的放電特性曲線對應
+        if (v >= 8.4f) return 100;
+        if (v >= 8.0f) return 75 + (v - 8.0f) / (8.4f - 8.0f) * 25;
+        if (v >= 7.4f) return 40 + (v - 7.4f) / (8.0f - 7.4f) * 35;
+        if (v >= 7.0f) return 15 + (v - 7.0f) / (7.4f - 7.0f) * 25;
+        if (v >= 6.6f) return  5 + (v - 6.6f) / (7.0f - 6.6f) * 10;
+        return 0; // 低於 6.6V (單顆低於 3.3V) 視為沒電，應盡速充電以保護電池
     }
 };
