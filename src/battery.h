@@ -69,8 +69,12 @@ public:
         // 充電狀態（TP4056 CHRG = LOW 時正在充電）
         bool isCharging = (digitalRead(BATT_CHRG_PIN) == LOW);
         
+        // Calculate raw ADC value from sum_mv: (avg_mV / 3300) * 4095
+        int avg_mv = sum_mv / samples;
+        int rawADC = (avg_mv * ADC_RESOLUTION) / 3300;
+        
         cachedStatus = {
-            raw,
+            rawADC,
             battVoltage,
             pct,
             isCharging,

@@ -157,6 +157,7 @@ void checkAndAnnounceWeather() {
     if (now - lastWeatherAnnounceTime > (PIR_COOLDOWN_SEC * 1000UL)) {
         lastWeatherAnnounceTime = now;
         Serial.println("🏠 觸發室內播報天氣邏輯");
+        Serial.printf("  → WEATHER_NOTIFY_EN=%d, weatherCache.valid=%d\n", WEATHER_NOTIFY_EN, weatherCache.valid);
         
         if (WEATHER_NOTIFY_EN && weatherCache.valid) {
             // 螢幕照常顯示氣溫與天氣
@@ -164,20 +165,26 @@ void checkAndAnnounceWeather() {
             
             // 🚀 改良版判斷邏輯：優先檢查天氣描述，最後檢查是否下雨
             String desc = weatherCache.description; // 假設這是一個 String
+            Serial.printf("  → 天氣描述: [%s], rainToday=%d\n", desc.c_str(), weatherCache.rainToday);
             
             // 優先檢查是否有「雨」相關描述
             if (desc.indexOf("雨") >= 0 || desc.indexOf("Rain") >= 0 || weatherCache.rainToday) {
+                Serial.println("  → 播放雨天音效");
                 playWavSync("/tts/rain.wav");
             } 
             // 接著檢查雲或陰
             else if (desc.indexOf("雲") >= 0 || desc.indexOf("陰") >= 0 || 
                      desc.indexOf("Cloud") >= 0 || desc.indexOf("Clouds") >= 0) {
+                Serial.println("  → 播放多雲音效");
                 playWavSync("/tts/cloudy.wav");
             } 
             // 最後才是晴天
             else {
+                Serial.println("  → 播放晴天音效");
                 playWavSync("/tts/sunny.wav");
             }
+        } else {
+            Serial.println("  → 天氣功能未啟動或資料無效，跳過播報");
         }
     }
 }
@@ -463,8 +470,8 @@ void setup() {
     pcf8574_init(PCF_STATUS_ADDR);
 
     pinMode(RELAY_PIN, OUTPUT);
-    digitalWrite(RELAY_PIN, HIGH);
-
+    digitalWrite(RELAY_PIN, LOW);   // 確保啟動時門是鎖緊的
+    
     battery.begin();
     pir.begin();
     Serial.println("✅ PIR 初始化完成");

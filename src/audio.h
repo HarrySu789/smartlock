@@ -231,9 +231,11 @@ void playWavSync(String filepath) {
         return;
     }
     
-    File file = SPIFFS.open(filepath.c_str(), "r");
+    File file = SPIFFS.open(filepath.c_str());
     if (!file) {
         Serial.printf("❌ [Audio] 無法打開檔案: %s\n", filepath.c_str());
+        // 檔案打開失敗，嘗試播放Fallback音效
+        playFallbackSound(filepath.c_str());
         return;
     }
     
@@ -276,9 +278,9 @@ void playWavSync(String filepath) {
     // =========================================================
     // 🚀 魔法除錯開關區 (請每次只把一個改成 true 來測試)
     // =========================================================
-    bool FIX_BYTE_SWAP = false;    // 開關 1：測試高低位元反轉
+    bool FIX_BYTE_SWAP = false;     // 開關 1：測試高低位元反轉
     bool FIX_1_BYTE_OFFSET = false; // 開關 2：測試跳過 1 Byte 錯位
-    bool FIX_UNSIGNED = false;      // 開關 3：測試修正無符號格式
+    bool FIX_UNSIGNED = false;     // 開關 3：測試修正無符號格式 (通常是 WAV PCM 格式需要)
     // =========================================================
 
     if (FIX_1_BYTE_OFFSET) file.read(); // 強制位移 1 Byte
