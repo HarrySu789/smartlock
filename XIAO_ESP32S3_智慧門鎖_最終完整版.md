@@ -5039,4 +5039,205 @@ Step 6. 第一次燒錄後，上傳 SPIFFS：
 
 ---
 
-*文件版本：V2.0 完整版 ｜ 硬體：Seeed XIAO ESP32 S3 Sense ｜ 開發環境：PlatformIO + Arduino Framework + esp-face*
+---
+
+## 第三十九章：程式碼維護與更新紀錄
+
+> 本章節記錄所有程式碼的修復和更新，方便日後維護參考。
+
+### 39.1 近期更新 (2025/06)
+
+#### 🔧 程式碼修復
+
+##### 1. src/battery.h - rawADC 變數未定義
+
+**問題**：編譯時出現 `'raw' was not declared in this scope` 錯誤。
+
+**原因**：在 `cachedStatus = { raw, ... }` 的初始化區塊中使用了未定義的變數 `raw`。
+
+**修復**：正確計算 `rawADC` 值：
+
+```cpp
+// 原始錯誤代碼：
+cachedStatus = {
+    raw,              // ❌ 'raw' 未定義
+    battVoltage,
+    pct,
+    isCharging,
+    (pct < LOW_BATTERY_THRESHOLD)
+};
+
+// 修復後：
+int avg_mv = sum_mv / samples;
+int rawADC = (avg_mv * ADC_RESOLUTION) / 3300;
+
+cachedStatus = {
+    rawADC,            // ✅ 現在直接使用計算出的 rawADC
+    battVoltage,
+    pct,
+    isCharging,
+    (pct < LOW_BATTERY_THRESHOLD)
+};
+```
+
+---
+
+##### 2. src/relay.h - 繼電器邏輯修正
+
+**問題**：使用者回報繼電器動作與預期相反（開鎖變成鎖門）。
+
+**原因**：原始程式是为 LOW 觸發 + NC（常閉）接線設計，但使用者的硬體是 HIGH 觸發 + NO（常開）接線。
+
+**修復**：更新 `relay.h` 邏輯：
+
+```cpp
+// 繼電器邏輯說明（ HIGH 觸發 + NO 常開接線）：
+//   RELAY_PIN = HIGH → 繼電器動作（通電）→ NO 閉合 → 門打開（解鎖）
+//   RELAY_PIN = LOW  → 繼電器不動作（斷電）→ NO 打開 → 門鎖緊
+// 重點：請根據您的硬體設備調整此邏輯
+
+void initRelay() {
+    pinMode(RELAY_PIN, OUTPUT);
+    digitalWrite(RELAY_PIN, LOW);    // 確保啟動時門是鎖緊的（LOW = 不動作 = 鎖門）
+    Serial.println("✅ 繼電器初始化（門已鎖緊）");
+}
+
+void unlockDoor(unsigned long durationMs = UNLOCK_DURATION_MS) {
+    digitalWrite(RELAY_PIN, HIGH);   // HIGH = 繼電器動作 = NO 閉合 = 開門
+    relayUnlocked  = true;
+    relayOpenTime  = millis();
+    Serial.printf("🔓 開鎖 %lu ms\n", durationMs);
+}
+
+void lockDoor() {
+    digitalWrite(RELAY_PIN, LOW);    // LOW = 繼電器不動作 = NO 打開 = 鎖門
+    relayUnlocked = false;
+    Serial.println("🔒 已鎖門");
+}
+```
+
+> ⚠️ **重要**：如果您使用的是 LOW 觸發 + NC 接線，請將上述邏輯反過來設定。
+
+---
+
+##### 3. src/audio.h - WAV 播放無聲問題
+
+**問題**：天氣語音（WAV 檔案）無法正確播放。
+
+**原因**：標準 WAV PCM 格式是無符號資料（0-65535），需要轉換為有符號 int16（-32768 到 +32767）。
+
+**修復**：啟用 `FIX_UNSIGNED` 並新增 Fallback 音效：
+
+```cpp
+// =========================================================
+// 🚀 魔法除錯開關區 (請每次只把一個改成 true 來測試)
+// =========================================================
+bool FIX_BYTE_SWAP = false;     // 開關 1：測試高低位元反轉
+bool FIX_1_BYTE_OFFSET = false; // 開關 2：測試跳過 1 Byte 錯位
+bool FIX_UNSIGNED = true;     // 開關 3：測試修正無符號格式 (通常是 WAV PCM 格式需要)
+// =========================================================
+
+// 應用修正：
+if (FIX_UNSIGNED) {
+    sample = sample - 32768; 
+}
+
+// 新增 Fallback 音效（當 WAV 播放失敗時）：
+void playFallbackSound(const char* filepath) {
+    Serial.println("🔄 [Audio] 使用 Fallback 合成音效...");
+    bool isRain = (strstr(filepath, "rain") != NULL);
+    bool isCloudy = (strstr(filepath, "cloudy") != NULL);
+    
+    if (isRain) playSound(SOUND_WEATHER_RAIN);
+    else if (isCloudy) playSound(SOUND_WEATHER_CLOUDY);
+    else playSound(SOUND_WEATHER_SUNNY);
+}
+
+void playWavSync(String filepath) {
+    // ... 原有程式碼 ...
+    
+    File file = SPIFFS.open(filepath.c_str());
+    if (!file) {
+        Serial.printf("❌ [Audio] 無法打開檔案: %s\n", filepath.c_str());
+        // 檔案打開失敗，嘗試播放Fallback音效
+        playFallbackSound(filepath.c_str());
+        return;
+    }
+    // ... 繼續播放 ...
+}
+```
+
+> 💡 **測試建議**：如果仍然是靜音，請將 `FIX_UNSIGNED` 改為 `false` 測試其他組合。
+
+---
+
+##### 4. src/main.cpp - 天氣播報除錯輸出
+
+**問題**：天氣語音沒有播放，但沒有足夠的診斷資訊。
+
+**修復**：新增詳細的除錯訊息：
+
+```cpp
+void checkAndAnnounceWeather() {
+    unsigned long now = millis();
+    if (now - lastWeatherAnnounceTime > (PIR_COOLDOWN_SEC * 1000UL)) {
+        lastWeatherAnnounceTime = now;
+        Serial.println("🏠 觸發室內播報天氣邏輯");
+        Serial.printf("  → WEATHER_NOTIFY_EN=%d, weatherCache.valid=%d\n", 
+                    WEATHER_NOTIFY_EN, weatherCache.valid);
+        
+        if (WEATHER_NOTIFY_EN && weatherCache.valid) {
+            String desc = weatherCache.description;
+            Serial.printf("  → 天氣描述: [%s], rainToday=%d\n", 
+                        desc.c_str(), weatherCache.rainToday);
+            
+            if (desc.indexOf("雨") >= 0 || ...) {
+                Serial.println("  → 播放雨天音效");
+                playWavSync("/tts/rain.wav");
+            }
+            // ... 其他天氣 ...
+        } else {
+            Serial.println("  → 天氣功能未啟動或資料無效，跳過播報");
+        }
+    }
+}
+```
+
+> 💡 **排查技巧**：請在序列監視器中查看這些除錯輸出，確認：
+> 1. `WEATHER_NOTIFY_EN` 是否為 1
+> 2. `weatherCache.valid` 是否為 1
+> 3. 天氣描述是什麼內容
+
+---
+
+#### 📋 變更檔案清單
+
+| 檔案 | 變更類型 | 說明 |
+|------|----------|------|
+| src/battery.h | 🔧 Bug Fix | 修復 rawADC 變數未定義 |
+| src/relay.h | 🔧 Logic Fix | 支援 HIGH 觸發 + NO 接線 |
+| src/audio.h | 🔧 Feature | 啟用 FIX_UNSIGNED + Fallback |
+| src/main.cpp | ✨ Enhancement | 新增天氣播報除錯訊息 |
+
+---
+
+### 39.2 常見問題快速排查
+
+#### Q1: 編譯失敗，出現 "'raw' was not declared"
+
+**解答**：請更新 `src/battery.h` 至最新版本v（包含 rawADC 計算）。
+
+#### Q2: 繼電器動作相反
+
+**解答**：請根據您的繼電器類型修改 `src/relay.h` 中的邏輯，或參考上節說明。
+
+#### Q3: 天氣語音沒有聲音
+
+**解答**：
+1. 確認序列監視器輸出，查看除錯訊息
+2. 嘗試將 `FIX_UNSIGNED` 改為 `false` 測試
+3. 如果 WAV 檔案無法播放，系統會自動使用 Fallback 合成音效
+
+---
+
+*文件版本：V2.1 更新版 (2025/06) ｜ 包含程式碼修復與除錯指南*
