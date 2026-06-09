@@ -9,7 +9,7 @@
 #define I2S_PORT         I2S_NUM_0
 #define SAMPLE_RATE      22050
 #define SAMPLE_BITS      I2S_BITS_PER_SAMPLE_16BIT
-#define AUDIO_AMPLITUDE  8000    // 0~32767，越大越響（注意不要破音）
+#define AUDIO_AMPLITUDE  6000    // 0~32767，越大越響（注意不要破音）
 
 // 音效定義：{ 頻率Hz, 持續ms }，結尾用 {0, 0}
 struct ToneNote { int freq; int duration; };

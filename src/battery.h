@@ -1,16 +1,12 @@
-// src/battery.h
 #pragma once
 
 #include <Arduino.h>
 
-#define BATT_ADC_PIN    8    // GPIO8 ← 接到 10k 與 4.7k 電阻的交界處 (測量點)
-// 如果沒有 TP5100 這類的充電模組，你可以先把 CHRG_PIN 註解掉
-// #define BATT_CHRG_PIN   7 
+#define BATT_ADC_PIN    1    // GPIO1 (D0)
 #define LOW_BATTERY_THRESHOLD 20  // 電量 < 20% 時警告
 
-// 分壓電路參數 (8.4V -> 2.68V 安全降壓)
-// R1 = 10k ohm (接電池正極), R2 = 4.7k ohm (接 GND)
-const float VOLTAGE_DIVIDER_RATIO = (10000.0f + 4700.0f) / 4700.0f; // 約 3.127
+// 請依照你的實測校正倍率（如果 3.127 量出來很準就不用動）
+const float VOLTAGE_DIVIDER_RATIO = 3.177; 
 
 class BatteryMonitor {
 public:
@@ -24,52 +20,68 @@ public:
     unsigned long lastCheck = 0;
     Status cachedStatus = {0, 100, false, false};
     
+    // EMA 濾波器的歷史變數
+    float smoothedVoltage = -1.0f; 
+    
     void begin() {
         pinMode(BATT_ADC_PIN, INPUT);
-        
-        // 如果有充電模組才啟用這行
-        // pinMode(BATT_CHRG_PIN, INPUT_PULLUP);  
-        
-        // ESP32 ADC 校準（衰減 11dB 以支援到最高 3.1V 左右的輸入）
         analogSetAttenuation(ADC_11db);
-        
-        Serial.println("✅ 電池監控初始化完成 (支援 8.4V 架構)");
+        Serial.println("✅ 電池監控初始化完成 (支援 8.4V 架構 + EMA 濾波)");
     }
     
     Status getStatus(bool forceUpdate = false) {
-        if (!forceUpdate && lastCheck != 0 && (millis() - lastCheck < 2000)) {
+        // 放寬到 10 秒更新一次就好，避免太頻繁讀取
+        if (!forceUpdate && lastCheck != 0 && (millis() - lastCheck < 10000)) {
             return cachedStatus;
         }
         lastCheck = millis();
         
-        // 16 次採樣濾波 (極好的寫法！)
-        int sum_mv = 0;
-        const int samples = 16;
+        // 1. 增加採樣次數到 64 次以消除高頻雜訊
+        long sum_mv = 0;
+        const int samples = 64;
         for (int i = 0; i < samples; i++) {
             sum_mv += analogReadMilliVolts(BATT_ADC_PIN);
-            delay(2);
+            delay(1); 
         }
         
-        // 計算測量點實際電壓 (V)
+        // ... 前面的採樣與電壓計算維持不變 ...
         float adcVoltage = (float)(sum_mv / samples) / 1000.0f;
+        float currentVoltage = adcVoltage * VOLTAGE_DIVIDER_RATIO;
         
-        // 乘回分壓倍率，還原電池真實總電壓
-        float battVoltage = adcVoltage * VOLTAGE_DIVIDER_RATIO;
+        // 2. 導入 EMA 濾波與「換電池突變偵測」
+        // 計算當前真實電壓與歷史平滑電壓的差距的絕對值
+        float voltageDiff = abs(currentVoltage - smoothedVoltage);
+
+        if (smoothedVoltage < 0 || voltageDiff > 0.4f) {
+            // 觸發條件：第一次開機，或是偵測到大於 0.4V 的瞬間跳變 (代表更換電池)
+            // 動作：直接「重置」濾波器，瞬間跟上真實電壓，不經過平滑計算
+            smoothedVoltage = currentVoltage; 
+            if (smoothedVoltage > 0) {
+                Serial.printf("⚡ 偵測到更換電池 (跳變 %.2fV)，重置電量顯示！\n", voltageDiff);
+            }
+        } else {
+            // 觸發條件：差距在 0.4V 以內 (正常的 WiFi 壓降或緩慢放電)
+            // 動作：套用平滑濾波，Alpha = 0.15 抵抗高頻雜訊
+            smoothedVoltage = (currentVoltage * 0.15f) + (smoothedVoltage * 0.85f);
+        }
         
-        // 換算 2S 電池電量百分比
-        int pct = voltageToPercent(battVoltage);
+        // ... 下方的換算百分比維持不變 ...
         
-        // 如果有接充電模組的訊號腳位，可改為 digitalRead(BATT_CHRG_PIN) == LOW
+        // 將平滑後的原始電壓，丟進校正函數，得出絕對精準的真實電壓
+        float finalRealVoltage = calibrateVoltage(smoothedVoltage);
+        
+        // 使用「校正後的真實電壓」來計算百分比
+        int pct = voltageToPercent(finalRealVoltage);
         bool isCharging = false; 
         
         cachedStatus = {
-            battVoltage,
+            finalRealVoltage,
             pct,
             isCharging,
             (pct < LOW_BATTERY_THRESHOLD)
         };
         
-        Serial.printf("🔋 電池狀態: %.2fV, %d%%\n", battVoltage, pct);
+        Serial.printf("🔋 [原始平滑: %.2fV] 函數校正後真實電壓: %.2fV, %d%%\n", smoothedVoltage, finalRealVoltage, pct);
         
         return cachedStatus;
     }
@@ -85,14 +97,40 @@ public:
         return String(buf);
     }
     
-private:
-    int voltageToPercent(float v) {
-        // 2S (串聯兩顆) 18650 的放電特性曲線對應
-        if (v >= 8.4f) return 100;
-        if (v >= 8.0f) return 75 + (v - 8.0f) / (8.4f - 8.0f) * 25;
-        if (v >= 7.4f) return 40 + (v - 7.4f) / (8.0f - 7.4f) * 35;
-        if (v >= 7.0f) return 15 + (v - 7.0f) / (7.4f - 7.0f) * 25;
-        if (v >= 6.6f) return  5 + (v - 6.6f) / (7.0f - 6.6f) * 10;
-        return 0; // 低於 6.6V (單顆低於 3.3V) 視為沒電，應盡速充電以保護電池
+ private:
+     // 分段線性插值校正函數 (專屬硬體校正模型)
+     float calibrateVoltage(float rawMonitorV) {
+         // 實測數據矩陣：x 為 Monitor 原始顯示電壓，y 為三用電表真實電壓
+         float x1 = 7.08, y1 = 7.55; 
+         float x2 = 7.42, y2 = 7.83; 
+         float x3 = 7.59, y3 = 7.96; 
+
+         // 1. 低於點 1：使用線段 1-2 的斜率進行向下外推
+         if (rawMonitorV <= x1) {
+             float slope1 = (y2 - y1) / (x2 - x1);
+             return y1 - (x1 - rawMonitorV) * slope1;
+         }
+         
+         // 2. 高於點 3：使用線段 2-3 的斜率進行向上外推
+         if (rawMonitorV >= x3) {
+             float slope2 = (y3 - y2) / (x3 - x2);
+             return y3 + (rawMonitorV - x3) * slope2;
+         }
+
+         // 3. 落在區間內：進行精確的內插計算
+         if (rawMonitorV <= x2) {
+             return y1 + (rawMonitorV - x1) * (y2 - y1) / (x2 - x1);
+         } else {
+             return y2 + (rawMonitorV - x2) * (y3 - y2) / (x3 - x2);
+         }
+     }
+
+     int voltageToPercent(float v) {
+        // 根據你實測的專屬電池放電曲線 (100%=8.05V, 50%=7.76V)
+        if (v >= 8.05f) return 100;
+        if (v >= 7.76f) return 50 + (v - 7.76f) / (8.05f - 7.76f) * 50; // 50%~100% 區間
+        if (v >= 7.40f) return 20 + (v - 7.40f) / (7.76f - 7.40f) * 30; // 20%~50% 區間
+        if (v >= 6.80f) return  5 + (v - 6.80f) / (7.40f - 6.80f) * 15; // 5%~20% 區間
+        return 0; // 低於 6.80V 視為沒電，應盡速充電
     }
 };

@@ -30,7 +30,7 @@
 //  天氣 API (OpenWeatherMap)
 // =============================================
 #define OWM_API_KEY        "5852c9c4a5adaa8b3002c5e9cd401276"
-#define OWM_CITY           "Taipei"
+#define OWM_CITY           "Taichung"
 #define OWM_COUNTRY        "TW"
 #define OWM_LANG           "zh_tw"
 #define WEATHER_UPDATE_MS  (10 * 60 * 1000UL)  // 每 10 分鐘更新
@@ -69,11 +69,11 @@
 #define I2S_DATA_PIN       4    // D3
 
 // 繼電器
-#define RELAY_PIN          1    // D0  HIGH=鎖門 / LOW=開門
+#define RELAY_PIN          8    // D9  HIGH=鎖門 / LOW=開門
 
 // 電池監控
-#define BATT_ADC_PIN       8    // D9  分壓器輸出（量到電池電壓的 0.5 倍）
-#define BATT_CHRG_PIN      7    // D8  TP4056 CHRG，LOW=充電中
+#define BATT_ADC_PIN       1    // D0  分壓器輸出（量到電池電壓的 ~0.32 倍）
+// #define BATT_CHRG_PIN    7    // D8  TP4056 CHRG（取消註解以避免與室內按鈕衝突）
 
 // =============================================
 //  PCF8574 I2C 地址
@@ -91,6 +91,12 @@
 //  HC-SR501 PIR 人體感測器
 // ════════════════════════════════════════
 #define PIR_OUT_PIN         9      // GPIO9 = D10 → 門外 PIR（直接 GPIO）
+
+// ════════════════════════════════════════
+//  室內實體開門按鈕 (Exit Button)
+// ════════════════════════════════════════
+#define INDOOR_BTN_PIN     7    // 室內開門按鈕 (實體 D8)，低電位觸發
+#define BTN_DEBOUNCE_MS   50    // 按鈕去彈跳時間 (毫秒)
 
 // PIR 感測 Threshold
 #define SLEEP_TIMEOUT_SEC   15     // IDLE 狀態下，幾秒無人就進入休眠

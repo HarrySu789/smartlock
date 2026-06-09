@@ -46,6 +46,10 @@ unsigned long lastPIRCheck     = 0;
 unsigned long lastActivityTime = 0;
 unsigned long lastWeatherAnnounceTime = 0;
 
+// 室內實體按鈕狀態
+unsigned long lastBtnPress = 0;
+bool lastBtnState = HIGH;
+
 extern String pendingEnrollName;
 extern bool   pendingEnroll;
 
@@ -245,7 +249,8 @@ void handleIdle() {
     // ... 下方的 OLED 顯示、鍵盤掃描、指紋掃描等程式碼保持原樣不動 ...
 
     static unsigned long lastDisplayUpdate = 0;
-    if (millis() - lastDisplayUpdate > 1000) {
+    // 🚫 UI Racing 防護：使用者正在輸入密碼時，暫停更新待機畫面
+    if (inputBuffer.length() == 0 && millis() - lastDisplayUpdate > 1000) {
         lastDisplayUpdate = millis();
         ui.display.ssd1306_command(SSD1306_DISPLAYON);
         auto batt = battery.getStatus();
@@ -269,7 +274,8 @@ void handleIdle() {
     }
 
     static unsigned long lastFaceCheck = 0;
-    if (millis() - lastFaceCheck > FACE_SCAN_INTERVAL_MS) {
+    // 🚫 UI Racing 防護：使用者正在輸入密碼時，暫停觸發人臉辨識
+    if (inputBuffer.length() == 0 && millis() - lastFaceCheck > FACE_SCAN_INTERVAL_MS) {
         lastFaceCheck = millis();
         handleFaceCheck();
     }
@@ -472,6 +478,9 @@ void setup() {
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, LOW);   // 確保啟動時門是鎖緊的
     
+    // 室內實體按鈕初始化 (啟用內建上拉)
+    pinMode(INDOOR_BTN_PIN, INPUT_PULLUP);
+    
     battery.begin();
     pir.begin();
     Serial.println("✅ PIR 初始化完成");
@@ -522,6 +531,36 @@ void setup() {
     }
 }
 void loop() {
+    // --- 室內實體按鈕偵測 (含去彈跳濾波) ---
+    bool currentBtnState = digitalRead(INDOOR_BTN_PIN);
+    if (currentBtnState != lastBtnState) {
+        lastBtnPress = millis();
+    }
+    
+    if ((millis() - lastBtnPress) > BTN_DEBOUNCE_MS) {
+        // 如果狀態穩定，且是按下的狀態 (LOW)
+        if (currentBtnState == LOW) {
+            // 避免重複觸發，只有當前狀態不是解鎖時才執行
+            if (currentState != STATE_UNLOCKED) {
+                Serial.println("🚪 偵測到室內實體按鈕按下，強制開門！");
+                
+                // 如果系統在休眠，先喚醒螢幕
+                if (currentState == STATE_SLEEP) {
+                    ui.display.ssd1306_command(SSD1306_DISPLAYON);
+                }
+                
+                // 顯示 OLED 解鎖畫面並執行開門
+                ui.showUnlocked("Indoor Button", getWeatherShort(weatherCache));
+                unlockDoor(); 
+                
+                // 強制切換狀態機進入解鎖狀態
+                currentState = STATE_UNLOCKED;
+            }
+        }
+    }
+    lastBtnState = currentBtnState;
+    // ----------------------------------------
+    
     maintainWiFi();
 
     static unsigned long lastBotPoll = 0;
