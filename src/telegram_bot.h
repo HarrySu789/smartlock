@@ -12,7 +12,6 @@
 #include "img_converters.h"
 #include "config.h"
 #include "relay.h"
-#include "battery.h"
 #include "weather.h"
 #include "face_recognition.h"
 #include "face_database.h"
@@ -23,7 +22,6 @@
 extern FaceRecognitionSystem faceSystem;
 extern FaceDatabase          faceDB;
 extern WeatherInfo           weatherCache;
-extern BatteryMonitor        battery;
 extern String                currentPassword;
 extern int                   failCount;
 extern SystemState           currentState;
@@ -202,14 +200,10 @@ void handleTelegramCommands() {
         }
         // ── /status ──────────────────────────
         else if (text == "/status") {
-            auto batt = battery.getStatus(true);
             String s = "📊 門鎖狀態\n";
             s += "━━━━━━━━━━━━\n";
             s += "🔒 門鎖：" + String(isDoorUnlocked() ? "開啟中" : "已鎖緊") + "\n";
             s += "📶 WiFi：" + WiFi.localIP().toString() + "\n";
-            s += "⚡ 電量：" + String(batt.percentage) + "% " +
-                 (batt.charging ? "（充電中）" : "") + "\n";
-            s += "🔋 電壓：" + String(batt.voltage, 2) + "V\n";
             s += "👤 人臉：" + String(faceSystem.getCount()) + " 筆\n";
             s += "⏱ 運行：" + String(millis() / 60000) + " 分鐘\n";
             s += "📅 時間：" + getCurrentDateTime();
@@ -226,16 +220,6 @@ void handleTelegramCommands() {
             s += "濕度：" + String(w.humidity) + "%\n";
             s += "風速：" + String(w.windSpeed, 1) + " m/s\n";
             s += "\n" + getWeatherMessage(w);
-            bot.sendMessage(CHAT_ID, s, "");
-        }
-        // ── /battery ─────────────────────────
-        else if (text == "/battery") {
-            auto batt = battery.getStatus(true);
-            String s = "🔋 電池狀態\n";
-            s += "電量：" + String(batt.percentage) + "%\n";
-            s += "電壓：" + String(batt.voltage, 2) + "V\n";
-            s += "狀態：" + String(batt.charging ? "充電中 ⚡" : "放電中");
-            if (batt.lowBattery) s += "\n⚠️ 電量偏低，請儘快充電！";
             bot.sendMessage(CHAT_ID, s, "");
         }
         // ── /alarm_off ───────────────────────
@@ -354,7 +338,6 @@ void handleTelegramCommands() {
             h += "🔓 /unlock - 遠端開鎖\n";
             h += "📊 /status - 系統狀態\n";
             h += "📶 /weather - 天氣查詢\n";
-            h += "🔋 /battery - 電量查詢\n";
             h += "💤 /sleep - 進入休眠\n";
             h += "🔕 /alarm_off - 解除警報\n\n";
             h += "👤 人臉管理\n";
@@ -376,7 +359,7 @@ void handleTelegramCommands() {
             String keyboardJson = "[";
             keyboardJson += "[\"/unlock\", \"/status\"],";
             keyboardJson += "[\"/sleep\", \"/alarm_off\"],";
-            keyboardJson += "[\"/weather\", \"/battery\"]";
+            keyboardJson += "[\"/weather\"]";
             keyboardJson += "]";
 
             bot.sendMessageWithReplyKeyboard(CHAT_ID, h, "", keyboardJson, true);

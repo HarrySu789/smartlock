@@ -71,10 +71,6 @@
 // 繼電器
 #define RELAY_PIN          8    // D9  HIGH=鎖門 / LOW=開門
 
-// 電池監控
-#define BATT_ADC_PIN       1    // D0  分壓器輸出（量到電池電壓的 ~0.32 倍）
-// #define BATT_CHRG_PIN    7    // D8  TP4056 CHRG（取消註解以避免與室內按鈕衝突）
-
 // =============================================
 //  PCF8574 I2C 地址
 // =============================================
@@ -115,8 +111,6 @@
 // =============================================
 #define UNLOCK_DURATION_MS    5000   // 開鎖持續時間（5 秒後自動鎖門）
 #define FACE_SCAN_INTERVAL_MS 300    // 人臉辨識掃描間隔
-#define LOW_BATTERY_PCT       20     // 電量低於此值顯示警告
-#define CRITICAL_BATTERY_PCT  10     // 電量低於此值進入省電模式
 
 // SPIFFS 人臉資料庫
 #define FACE_DB_DIR        "/faces"

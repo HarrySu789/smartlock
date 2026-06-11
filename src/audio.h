@@ -9,7 +9,7 @@
 #define I2S_PORT         I2S_NUM_0
 #define SAMPLE_RATE      22050
 #define SAMPLE_BITS      I2S_BITS_PER_SAMPLE_16BIT
-#define AUDIO_AMPLITUDE  6000    // 0~32767，越大越響（注意不要破音）
+#define AUDIO_AMPLITUDE  8000    // 0~32767，越大越響（注意不要破音）
 
 // 音效定義：{ 頻率Hz, 持續ms }，結尾用 {0, 0}
 struct ToneNote { int freq; int duration; };
@@ -20,8 +20,6 @@ static const ToneNote SOUND_DENY[]      = {{350,200},{250,300},{0,0}};
 static const ToneNote SOUND_BEEP[]      = {{1200,60},{0,0}};
 static const ToneNote SOUND_ALARM[]     = {{2000,180},{0,120},{2000,180},{0,120},{2000,180},{0,0}};
 static const ToneNote SOUND_ENROLL_OK[] = {{1047,80},{1319,80},{1568,120},{0,0}};
-static const ToneNote SOUND_LOW_BATT[]  = {{600,150},{0,50},{600,150},{0,0}};
-static const ToneNote SOUND_LOWBATT[]   = {{600,150},{0,50},{600,150},{0,0}};
 
 bool audioInitialized = false;
 

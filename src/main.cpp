@@ -8,7 +8,6 @@
 #include "face_database.h"
 #include "face_manager.h"
 #include "oled_ui.h"
-#include "battery.h"
 #include "keypad.h"
 #include "fingerprint.h"
 #include "audio.h"
@@ -25,7 +24,6 @@ OledUI                ui;
 FaceRecognitionSystem faceSystem;
 FaceDatabase          faceDB;
 FaceManager           faceMgr(faceSystem, faceDB, ui);
-BatteryMonitor        battery;
 PIRSensor             pir;
 
 HardwareSerial       fpSerial(1);
@@ -156,7 +154,7 @@ void checkAndAnnounceWeather() {
             ui.showMessage("Weather:", getWeatherMessage(weatherCache));
             
             // 🚀 改良版判斷邏輯：優先檢查天氣描述，最後檢查是否下雨
-            String desc = weatherCache.description; // 假設這是一個 String
+            String desc = weatherCache.description;
             Serial.printf("  → 天氣描述: [%s], rainToday=%d\n", desc.c_str(), weatherCache.rainToday);
             
             // 優先檢查是否有「雨」相關描述
@@ -236,19 +234,16 @@ void handleIdle() {
         }
     }
     
-    // ... 下方的 OLED 顯示、鍵盤掃描、指紋掃描等程式碼保持原樣不動 ...
-
     static unsigned long lastDisplayUpdate = 0;
     // 🚫 UI Racing 防護：使用者正在輸入密碼時，暫停更新待機畫面
     if (inputBuffer.length() == 0 && millis() - lastDisplayUpdate > 1000) {
         lastDisplayUpdate = millis();
         ui.display.ssd1306_command(SSD1306_DISPLAYON);
-        auto batt = battery.getStatus();
         struct tm t;
         getLocalTime(&t);
         char timeStr[6];
         strftime(timeStr, 6, "%H:%M", &t);
-        ui.showIdle(String(timeStr), weatherCache.temp, weatherCache.rainToday, batt.percentage, batt.charging);
+        ui.showIdle(String(timeStr), weatherCache.temp, weatherCache.rainToday, 100, false);
     }
 
     char key = scanKeypad(PCF_KEYPAD_ADDR);
@@ -435,7 +430,6 @@ void startFingerprintVerify() {
 }
 
 void setup() {
-    
     Serial.begin(115200);
     delay(2000);
     Serial.println("╔═══════════════════════╗");
@@ -447,8 +441,9 @@ void setup() {
     currentPassword = preferences.getString("pwd", DEFAULT_PASSWORD);
     Serial.println("📦 從 Flash 載入密碼：" + currentPassword);
 
-    flushPendingTelegramMessages(); // ➕ 加入這行，每次開機先通馬桶！
-    // 🚀 關鍵補丁：啟動 SPIFFS 檔案系統
+    flushPendingTelegramMessages();
+    
+    // 🚀 啟動 SPIFFS 檔案系統
     if (!SPIFFS.begin(true)) {
         Serial.println("❌ SPIFFS 掛載失敗！WAV 將無法播放");
     } else {
@@ -469,15 +464,12 @@ void setup() {
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, LOW);   // 確保啟動時門是鎖緊的
     
-    battery.begin();
     pir.begin();
     Serial.println("✅ PIR 初始化完成");
 
     ui.showMessage("Booting...", "Camera");
     faceSystem.initCamera();
     
-    // 注意：如果你的 faceDB.begin() 裡面已經有偷偷呼叫 SPIFFS.begin()，
-    // 在上面多呼叫一次也不會當機，這樣寫是最保險的。
     faceDB.begin();
     faceMgr.restoreDatabase();
 
@@ -486,7 +478,7 @@ void setup() {
         Serial.println("⚠️ 指紋模組未找到");
     }
 
-    // 初始化音頻系統 (確保你在 audio.h 已經把通訊格式改成 MSB 了！)
+    // 初始化音頻系統
     initAudio();
 
     bool wifiOK = connectWiFi();
@@ -508,7 +500,7 @@ void setup() {
     currentState = STATE_SLEEP;
     Serial.println("✅ 啟動完成");
 
-    // 檔案偵測邏輯 (保持原樣，現在它能正確讀到檔案了)
+    // 檔案偵測邏輯
     File root = SPIFFS.open("/"); 
     File file = root.openNextFile();
     while(file){
@@ -517,47 +509,38 @@ void setup() {
         file = root.openNextFile();
     }
 }
+
 void loop() {
     // 🛡️ 強制保鑣：每一圈都強制把 0x20 擴充板的 P2(按鈕) 與 PIR 設為 1 (輸入模式)
-    // 徹底防止 PCF8574 內部鎖存器因突波或接地而卡死在輸出 0 的狀態
     pcf8574_write(PCF_STATUS_ADDR, (1 << INDOOR_BTN_P) | (1 << PIR_IN_P));
 
-    
     // --- 室內實體按鈕偵測 (透過 PCF8574 P2) ---
     uint8_t pcfStatus = pcf8574_read(PCF_STATUS_ADDR);
-    // 讀取 P2 腳位的狀態 (0為按下, 1為放開)
     bool currentBtnState = (pcfStatus & (1 << INDOOR_BTN_P)) ? HIGH : LOW;
     if (currentBtnState != lastBtnState) {
         lastBtnPress = millis();
     }
     
     if ((millis() - lastBtnPress) > BTN_DEBOUNCE_MS) {
-        // 如果狀態穩定，且是按下的狀態 (LOW)
         if (currentBtnState == LOW) {
-            // 避免重複觸發，只有當前狀態不是解鎖時才執行
             if (currentState != STATE_UNLOCKED) {
                 Serial.println("🚪 偵測到室內實體按鈕按下，強制開門！");
                 
-                // 如果系統在休眠，先喚醒螢幕
                 if (currentState == STATE_SLEEP) {
                     ui.display.ssd1306_command(SSD1306_DISPLAYON);
                 }
                 
-                // 顯示 OLED 解鎖畫面並執行開門
                 ui.showUnlocked("Indoor Button", getWeatherShort(weatherCache));
                 unlockDoor(); 
                 
-                // 強制切換狀態機進入解鎖狀態
                 currentState = STATE_UNLOCKED;
             }
         }
     }
     lastBtnState = currentBtnState;
-    // ----------------------------------------
 
     // --- 室內 PIR 邊緣觸發偵測 (防連發) ---
     bool currentIndoorPir = pir.isInsideDetected();
-    // 只有在從 LOW 變成 HIGH 的「瞬間」，才判定為觸發
     indoorPirEdgeTriggered = (currentIndoorPir && !lastIndoorPirState);
     lastIndoorPirState = currentIndoorPir;
     
@@ -577,24 +560,6 @@ void loop() {
     if (millis() - lastWeatherUpdate > WEATHER_UPDATE_MS) {
         lastWeatherUpdate = millis();
         if (WiFi.status() == WL_CONNECTED) weatherCache = getWeather();
-    }
-
-    // 讓 OLED 螢幕的更新週期 (handleIdle 中) 來驅動底層的 ADC 讀取。
-    // 這裡我們只要監控 lowBattery 狀態是否「剛發生變化」，避免狂發 Telegram。
-    static bool hasSentLowBattAlert = false;
-    
-    // 從快取拿狀態 (每 60 秒底層會自動更新一次真實讀值)
-    auto b = battery.getStatus(false); 
-    
-    // 如果低於 20%，且還沒發過警報，且系統不是在深度睡眠
-    if (b.lowBattery && !hasSentLowBattAlert && currentState != STATE_SLEEP) {
-        playSoundAsync(SOUND_LOW_BATT);
-        sendTelegramMessage("⚡ 警告：門鎖電量不足 (" + String(b.percentage) + "%)\n請盡速充電或更換電池！");
-        hasSentLowBattAlert = true; // 鎖住，不要重複發送
-    } 
-    // 如果電池充飽了或是換了新電池，解除警報鎖定
-    else if (!b.lowBattery && hasSentLowBattAlert) {
-        hasSentLowBattAlert = false; 
     }
 
     switch (currentState) {
