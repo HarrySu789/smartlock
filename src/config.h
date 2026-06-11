@@ -81,10 +81,8 @@
 #define PCF_KEYPAD_ADDR    0x20   // A0=A1=A2=GND
 #define PCF_STATUS_ADDR    0x21   // A0=VCC, A1=A2=GND
 
-// PCF8574 #2 （狀態指示）腳位
-#define LED_GREEN_P        0      // P0 → 綠色 LED（解鎖成功）
-#define LED_RED_P          1      // P1 → 紅色 LED（警報/失敗）
-#define BUZZER_P           2      // P2 → 蜂鳴器（選配）
+// PCF8574 #2 （純輸入）腳位
+#define INDOOR_BTN_P       2      // P2 → 室內開門按鈕（輸入）
 #define PIR_IN_P            3      // P3 → 門內 PIR 輸入
 
 // ════════════════════════════════════════
@@ -93,9 +91,8 @@
 #define PIR_OUT_PIN         9      // GPIO9 = D10 → 門外 PIR（直接 GPIO）
 
 // ════════════════════════════════════════
-//  室內實體開門按鈕 (Exit Button)
+//  室內實體開門按鈕 (Exit Button) - 透過 PCF8574
 // ════════════════════════════════════════
-#define INDOOR_BTN_PIN     7    // 室內開門按鈕 (實體 D8)，低電位觸發
 #define BTN_DEBOUNCE_MS   50    // 按鈕去彈跳時間 (毫秒)
 
 // PIR 感測 Threshold
@@ -103,7 +100,7 @@
 
 // PIR 防連觸冷卻時間（分鐘）
 // 門內 PIR 觸發天氣播報後，需經過此時間才能再次觸發
-#define PIR_COOLDOWN_SEC    (30)  // 30 秒冷卻時間
+#define PIR_COOLDOWN_SEC    (15)  // 15 秒冷卻時間
 
 // =============================================
 //  功能開關

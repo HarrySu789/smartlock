@@ -50,6 +50,10 @@ unsigned long lastWeatherAnnounceTime = 0;
 unsigned long lastBtnPress = 0;
 bool lastBtnState = HIGH;
 
+// PIR 邊緣觸發狀態
+static bool lastIndoorPirState = false;
+bool indoorPirEdgeTriggered = false;
+
 extern String pendingEnrollName;
 extern bool   pendingEnroll;
 
@@ -63,7 +67,6 @@ void handleKeyInput(char key);
 void handleFaceCheck();
 void successUnlock(const String& name, camera_fb_t* photoFb);
 void failedAttempt();
-void setLED(bool green, bool red);
 void markActivity();
 void checkPendingEnrollWrapper(camera_fb_t* fb);
 void startFingerprintEnrollment();
@@ -71,17 +74,6 @@ void startFingerprintVerify();
 
 void markActivity() {
     lastActivityTime = millis();
-}
-
-void setLED(bool green, bool red) {
-    uint8_t status = pcf8574_read(PCF_STATUS_ADDR);
-    status &= ~(1 << LED_GREEN_P);
-    status &= ~(1 << LED_RED_P);
-    if (!green) status |= (1 << LED_GREEN_P);
-    if (!red)   status |= (1 << LED_RED_P);
-    // 保護 PIR_IN_P 腳位
-    status |= (1 << PIR_IN_P);
-    pcf8574_write(PCF_STATUS_ADDR, status);
 }
 
 void successUnlock(const String& name, camera_fb_t* photoFb) {
@@ -93,7 +85,6 @@ void successUnlock(const String& name, camera_fb_t* photoFb) {
     markActivity();
     unlockDoor(UNLOCK_DURATION_MS);
     playSoundAsync(SOUND_UNLOCK);
-    setLED(true, false);
     String weatherMsg = getWeatherMessage(weatherCache);
     ui.showUnlocked(name, weatherMsg);
     sendTelegramMessage("✅ 解鎖：" + name + "\n" + getCurrentDateTime() + "\n" + weatherMsg);
@@ -103,9 +94,6 @@ void failedAttempt() {
     failCount++;
     markActivity();
     playSoundAsync(SOUND_DENY);
-    setLED(false, true);
-    delay(500);
-    setLED(false, false);
     ui.showDenied(failCount, MAX_FAIL_ATTEMPTS);
     delay(1500);
     if (failCount >= MAX_FAIL_ATTEMPTS) {
@@ -195,6 +183,18 @@ void checkAndAnnounceWeather() {
 
 // ── 修改後的休眠處理 ──
 void handleSleep() {
+    // 🚀 邊緣觸發訊號稍縱即逝，必須在 500ms 大閘門前攔截，防止訊號遺失！
+    if (indoorPirEdgeTriggered) {
+        Serial.println("🏠 門內偵測到人體（邊緣觸發），喚醒系統");
+        currentState = STATE_IDLE;
+        lastActivityTime = millis();
+        
+        // 喚醒的瞬間，直接強制執行天氣播報檢查
+        checkAndAnnounceWeather();
+        return; // 成功觸發，直接結束本輪
+    }
+
+    // 門外檢測與其他定時任務維持在 500ms 閘門後
     if (millis() - lastPIRCheck < 500) return;
     lastPIRCheck = millis();
 
@@ -207,29 +207,20 @@ void handleSleep() {
         lastActivityTime = millis();
         return;
     }
-
-    // 門內 PIR 檢測（喚醒系統並「同時」播報天氣）
-    if (pir.isInsideDetected()) {
-        Serial.println("🏠 門內偵測到人體，喚醒系統");
-        currentState = STATE_IDLE;
-        lastActivityTime = millis();
-        
-        // 🚀 喚醒的瞬間，直接強制執行天氣播報檢查
-        checkAndAnnounceWeather();
-    }
 }
 
 // ── 修改後的待機處理 ──
 void handleIdle() {
+    // 🚀 門內 PIR 檢查 (邊緣觸發) - 移至 500ms 閘門上方避免漏失
+    if (indoorPirEdgeTriggered) {
+        checkAndAnnounceWeather();
+        markActivity(); // 更新活動時間，避免播報完馬上又睡著
+    }
+
+    // 其他任務（如門外檢測、自動休眠計時）維持在 500ms 閘門內部
     if (millis() - lastPIRCheck >= 500) {
         lastPIRCheck = millis();
         
-        // 門內 PIR 檢查 (待機狀態下有人經過)
-        if (pir.isInsideDetected()) {
-            checkAndAnnounceWeather();
-            markActivity(); // 更新活動時間，避免播報完馬上又睡著
-        }
-
         // 門外 PIR 檢查與自動休眠邏輯
         bool outsideDetected = pir.isOutsideDetected();
         if (!outsideDetected && (millis() - lastActivityTime) / 1000 >= SLEEP_TIMEOUT_SEC) {
@@ -237,7 +228,6 @@ void handleIdle() {
             ui.showMessage("Standby...", "Sleep");
             delay(800);
             ui.display.ssd1306_command(SSD1306_DISPLAYOFF);
-            setLED(false, false);
             inputBuffer = "";
             currentState = STATE_SLEEP;
             return;
@@ -346,7 +336,6 @@ void handleUnlocked() {
         ui.showUnlocked(lastUnlockName, "Lock in " + String(remaining) + "s");
     }
     if (!isDoorUnlocked()) {
-        setLED(false, false);
         currentState = STATE_IDLE;
         Serial.println("🔒 已自動鎖門");
     }
@@ -358,7 +347,6 @@ void handleAlarm() {
     if (millis() - lastBeep > 2000) {
         lastBeep = millis();
         playSoundAsync(SOUND_ALARM);
-        setLED(false, (millis() / 350) % 2);
     }
     char key = scanKeypad(PCF_KEYPAD_ADDR);
     if (!key) return;
@@ -369,7 +357,6 @@ void handleAlarm() {
         if (inputBuffer == currentPassword || inputBuffer == ADMIN_PASSWORD) {
             failCount = 0;
             currentState = STATE_IDLE;
-            setLED(false, false);
             sendTelegramMessage("警報已解除");
         }
         inputBuffer = "";
@@ -475,11 +462,12 @@ void setup() {
     pcf8574_init(PCF_KEYPAD_ADDR);
     pcf8574_init(PCF_STATUS_ADDR);
 
+    // 初始化 0x20 擴充板為純輸入模式 (PIR 與按鈕)
+    uint8_t initStatus = (1 << INDOOR_BTN_P) | (1 << PIR_IN_P);
+    pcf8574_write(PCF_STATUS_ADDR, initStatus);
+
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, LOW);   // 確保啟動時門是鎖緊的
-    
-    // 室內實體按鈕初始化 (啟用內建上拉)
-    pinMode(INDOOR_BTN_PIN, INPUT_PULLUP);
     
     battery.begin();
     pir.begin();
@@ -508,7 +496,6 @@ void setup() {
     }
 
     playSound(SOUND_STARTUP);
-    setLED(false, false);
 
     if (wifiOK) {
         sendTelegramMessage("🔐 智慧門鎖 V2 已啟動\nIP: " + WiFi.localIP().toString());
@@ -531,8 +518,15 @@ void setup() {
     }
 }
 void loop() {
-    // --- 室內實體按鈕偵測 (含去彈跳濾波) ---
-    bool currentBtnState = digitalRead(INDOOR_BTN_PIN);
+    // 🛡️ 強制保鑣：每一圈都強制把 0x20 擴充板的 P2(按鈕) 與 PIR 設為 1 (輸入模式)
+    // 徹底防止 PCF8574 內部鎖存器因突波或接地而卡死在輸出 0 的狀態
+    pcf8574_write(PCF_STATUS_ADDR, (1 << INDOOR_BTN_P) | (1 << PIR_IN_P));
+
+    
+    // --- 室內實體按鈕偵測 (透過 PCF8574 P2) ---
+    uint8_t pcfStatus = pcf8574_read(PCF_STATUS_ADDR);
+    // 讀取 P2 腳位的狀態 (0為按下, 1為放開)
+    bool currentBtnState = (pcfStatus & (1 << INDOOR_BTN_P)) ? HIGH : LOW;
     if (currentBtnState != lastBtnState) {
         lastBtnPress = millis();
     }
@@ -560,6 +554,12 @@ void loop() {
     }
     lastBtnState = currentBtnState;
     // ----------------------------------------
+
+    // --- 室內 PIR 邊緣觸發偵測 (防連發) ---
+    bool currentIndoorPir = pir.isInsideDetected();
+    // 只有在從 LOW 變成 HIGH 的「瞬間」，才判定為觸發
+    indoorPirEdgeTriggered = (currentIndoorPir && !lastIndoorPirState);
+    lastIndoorPirState = currentIndoorPir;
     
     maintainWiFi();
 
